@@ -11,7 +11,7 @@
 #include <pthread.h>
 
 #define BUFSZ 2048
-#define MAX_CLIENTS 2
+#define MAX_CLIENTS 3
 
 void usageExit(int argc, char **argv) {
     printf("Server usage: %s <v4|v6> <server port>\n", argv[0]);
@@ -125,7 +125,7 @@ void* clientThread(void *data) {
                 sprintf(buffer, "07$_$%d$02$", senderIndex);
                 bytesReceived = send(cdata->clientSocket, buffer, strlen(buffer)+1, 0);
                 if(bytesReceived != strlen(buffer)+1) msgExit("send() failed");
-                if((int)bytesReceived == 0) break;
+                if(bytesReceived == 0) break;
 
                 continue;
             }
@@ -135,21 +135,60 @@ void* clientThread(void *data) {
                 sprintf(buffer, "08$_$%d$01$", senderIndex);
                 bytesReceived = send(cdata->clientSocket, buffer, strlen(buffer)+1, 0);
                 if(bytesReceived != strlen(buffer)+1) msgExit("send() failed");
-                if((int)bytesReceived == 0) break;
+                if(bytesReceived == 0) break;
 
-                if(senderIndex < 9) printf("User 0%d removed\n", senderIndex+1);
-                else printf("User %d removed\n", senderIndex+1);
+                printf("User %02d removed\n", senderIndex+1);
 
                 sprintf(buffer, "02$%d$_$_$", senderIndex);
                 for(int i = 0; i < MAX_CLIENTS; i++) {
                     if(clients.list[i] != -2) {
                         bytesReceived = send(clients.list[i], buffer, strlen(buffer)+1, 0);
                         if(bytesReceived != strlen(buffer)+1) msgExit("send() failed");
-                        if((int)bytesReceived == 0) break;
+                        if(bytesReceived == 0) break;
                     }
                 }
-
+                // finaliza o processo de saída de um user
                 break;
+            }
+        }
+
+        if(strcmp(idMsg, "06") == 0) {
+            int receiverIndex = atoi(idReceiver);
+            if(receiverIndex >= MAX_CLIENTS || clients.list[receiverIndex] == -2) {
+                printf("User %02d not found\n", receiverIndex+1);
+
+                sprintf(buffer, "07$_$%d$03$", receiverIndex);
+                bytesReceived = send(cdata->clientSocket, buffer, strlen(buffer)+1, 0);
+                if(bytesReceived != strlen(buffer)+1) msgExit("send() failed");
+                if(bytesReceived == 0) break;
+            }
+            else {
+                // hora atual no formato HH:MM
+                time_t rawtime;
+                struct tm *timeinfo;
+                time(&rawtime);
+                timeinfo = localtime(&rawtime);
+                char timeStr[6];
+                strftime(timeStr, 6, "%H:%M", timeinfo);
+
+                int senderIndex = atoi(idSender);
+                char aux[strlen(message)];
+                strcpy(aux, message);
+                char finalMessage[BUFSZ - 8];
+
+                sprintf(finalMessage, "P [%s] -> %02d: %s", timeStr, receiverIndex+1, aux);
+
+                sprintf(buffer, "06$%d$%d$%s$", senderIndex, receiverIndex, finalMessage);
+                bytesReceived = send(cdata->clientSocket, buffer, strlen(buffer)+1, 0);
+                if(bytesReceived != strlen(buffer)+1) msgExit("send() failed");
+                if(bytesReceived == 0) break;
+
+                sprintf(finalMessage, "P [%s] %02d: %s", timeStr, senderIndex+1, aux);
+
+                sprintf(buffer, "06$%d$%d$%s$", senderIndex, receiverIndex, finalMessage);
+                bytesReceived = send(clients.list[receiverIndex], buffer, strlen(buffer)+1, 0);
+                if(bytesReceived != strlen(buffer)+1) msgExit("send() failed");
+                if(bytesReceived == 0) break;
             }
         }
 
@@ -240,14 +279,8 @@ int main(int argc, char **argv) {
         cdata->clientIndex = index;
 
         memset(servBuffer, 0, BUFSZ);
-        if(index < 9) {
-            printf("User 0%d added\n", index+1);
-            sprintf(servBuffer, "06$%d$_$User 0%d joined the group!\n$", index, index+1);
-        }
-        else {
-            printf("User %d added\n", index+1);
-            sprintf(servBuffer, "06$%d$_$User %d joined the group!\n$", index, index+1);
-        }
+        printf("User %02d added\n", index+1);
+        sprintf(servBuffer, "06$%d$_$User %02d joined the group!\n$", index, index+1);
 
         // broadcast message indicating new user to all active users
         for(int j = 0; j < MAX_CLIENTS; j++) {

@@ -12,7 +12,7 @@
 #include <pthread.h>
 
 #define BUFSZ 2048
-#define MAX_CLIENTS 2
+#define MAX_CLIENTS 3
 
 void usageExit(int argc, char **argv) {
     printf("Client usage: %s <server IP> <server port>\n", argv[0]);
@@ -100,9 +100,26 @@ void* processStdin(void *sockNum) {
         memset(buffer, 0, BUFSZ);
         pthread_testcancel();
         fgets(buffer, BUFSZ-1, stdin);
-        if(strncmp(buffer, "connection closed", 17) == 0) {
+
+        if(strncmp(buffer, "close connection", 16) == 0) {
             memset(buffer, 0, BUFSZ);
             sprintf(buffer, "02$%d$_$_$", thisClientIndex);
+            count = send(sock, buffer, strlen(buffer)+1, 0);
+            if(count != strlen(buffer)+1) msgExit("send() failed, msg size mismatch");
+        }
+
+        if(strncmp(buffer, "send to ", 8) == 0) {
+            char *token = strtok(buffer, " "); // send
+            token = strtok(NULL, " ");         // to
+            token = strtok(NULL, " ");         // dest
+            int idUserDest = atoi(token) - 1;
+            token = strtok(NULL, "");          // msg
+            char msg[BUFSZ - 8 - 17]; // -8 dos separadores e outros conteúdos da MSG e -17 da marca "P" e da marca de tempo.
+            strcpy(msg, token);
+
+            memset(buffer, 0, BUFSZ);
+            sprintf(buffer, "06$%d$%d$%s$", thisClientIndex, idUserDest, msg);
+            // printf("buffer: %s\n", buffer);
             count = send(sock, buffer, strlen(buffer)+1, 0);
             if(count != strlen(buffer)+1) msgExit("send() failed, msg size mismatch");
         }
@@ -166,8 +183,7 @@ int main(int argc, char **argv) {
         if(strcmp(idMsg, "02") == 0) {
             int senderIndex = atoi(idSender);
             clientIndexes[senderIndex] = 0;
-            if(senderIndex < 9) printf("User 0%d left the group!\n", senderIndex+1);
-            else printf("User %d left the group!\n", senderIndex+1);
+            printf("User %02d left the group!\n", senderIndex+1);
         }
         if(strcmp(idMsg, "04") == 0) {
             char *aux = strtok(message, ",");
@@ -177,9 +193,10 @@ int main(int argc, char **argv) {
             }
         }
         if(strcmp(idMsg, "06") == 0) {
-            clientIndexes[atoi(idSender)] = 1;
-            if(thisClientIndex == -2) thisClientIndex = atoi(idSender); // -2 significa que ainda não foi definido
-            // printf("User %s connected\n", idSender);
+            if(strcmp(idReceiver, "_") == 0) {
+                clientIndexes[atoi(idSender)] = 1;
+                if(thisClientIndex == -2) thisClientIndex = atoi(idSender); // -2 significa que ainda não foi definido
+            }
             printf("%s", message);
         }
         if(strcmp(idMsg, "07") == 0) {
@@ -189,6 +206,9 @@ int main(int argc, char **argv) {
             }
             if(strcmp(message, "02") == 0) {
                 printf("User not found\n");
+            }
+            if(strcmp(message, "03") == 0) {
+                printf("Receiver not found\n");
             }
         }
         if(strcmp(idMsg, "08") == 0) {
