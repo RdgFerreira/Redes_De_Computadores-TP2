@@ -233,7 +233,7 @@ int main(int argc, char **argv) {
         for(int i = 0; i < MAX_CLIENTS; i++) printf("%d\n", clientIndexes[i]);
         printf("This client index: %d\n", thisClientIndex);
     }
-    printf("ended\n");
+    // printf("ended\n");
     // kill the thread
     pthread_cancel(t_stdin);
     pthread_join(t_stdin, NULL);
