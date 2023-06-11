@@ -137,10 +137,6 @@ void* processStdin(void *sockNum) {
             count = send(sock, buffer, strlen(buffer)+1, 0);
             if(count != strlen(buffer)+1) msgExit("send() failed, msg size mismatch");
         }
-
-        // envia mensagem para o servidor, +1 para contar o '\0', count conta os bytes enviados
-        // count = send(sock, buffer, strlen(buffer)+1, 0);
-        // if(count != strlen(buffer)+1) msgExit("send() failed, msg size mismatch");
     }
 
     pthread_exit(NULL);
