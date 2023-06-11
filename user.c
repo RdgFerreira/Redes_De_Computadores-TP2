@@ -108,12 +108,26 @@ void* processStdin(void *sockNum) {
             if(count != strlen(buffer)+1) msgExit("send() failed, msg size mismatch");
         }
 
+        if(strncmp(buffer, "list users", 10) == 0) {
+            int foundOne = 0;
+            for(int i = 0; i < MAX_CLIENTS; i++) {
+                if(clientIndexes[i] != 0) {
+                    if(foundOne) printf(" %02d", i+1);
+                    else printf("%02d", i+1);
+                    foundOne = 1;
+                }
+            }
+            if(foundOne) printf("\n");
+        }
+
         if(strncmp(buffer, "send to ", 8) == 0) {
             char *token = strtok(buffer, " "); // send
             token = strtok(NULL, " ");         // to
             token = strtok(NULL, " ");         // dest
+            if(token == NULL) continue;
             int idUserDest = atoi(token) - 1;
             token = strtok(NULL, "");          // msg
+            if(token == NULL) continue;
             char msg[BUFSZ - 8 - 17]; // -8 dos separadores e outros conteúdos da MSG e -17 da marca "P" e da marca de tempo.
             strcpy(msg, token);
 

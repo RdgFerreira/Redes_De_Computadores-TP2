@@ -154,7 +154,7 @@ void* clientThread(void *data) {
 
         if(strcmp(idMsg, "06") == 0) {
             int receiverIndex = atoi(idReceiver);
-            if(receiverIndex >= MAX_CLIENTS || clients.list[receiverIndex] == -2) {
+            if((receiverIndex < 0 || receiverIndex >= MAX_CLIENTS) || clients.list[receiverIndex] == -2) {
                 printf("User %02d not found\n", receiverIndex+1);
 
                 sprintf(buffer, "07$_$%d$03$", receiverIndex);
