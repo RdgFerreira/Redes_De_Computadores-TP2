@@ -165,12 +165,9 @@ int main(int argc, char **argv) {
 
     char addrstr[BUFSZ];
     addrtostr(addr, addrstr, BUFSZ);
-    printf("Connected to %s\n", addrstr);
+    // printf("Connected to %s\n", addrstr);
 
-    // char bufferRes[BUFSZ];
     char bufferRes[BUFSZ];
-    // memset(bufferRes, 0, BUFSZ);
-
     for(int i = 0; i < MAX_CLIENTS; i++) clientIndexes[i] = 0;
 
     pthread_t t_stdin;
