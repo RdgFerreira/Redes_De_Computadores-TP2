@@ -76,12 +76,12 @@ void addrtostr(const struct sockaddr *addr, char *str, size_t strsize) {
     if(str) snprintf(str, strsize, "IPv%d %s %hu", version, addrstr, port);
 }
 
-typedef struct msg {
-    char idMsg[2];
-    char idSender[2];
-    char idReceiver[2];
-    char Message[BUFSZ - 6];
-} msg;
+typedef struct command{
+    int idMsg;
+    int idSender;
+    int idReceiver; 
+    char message[BUFSZ]; 
+} command;
 
 typedef struct clientSockets {
     // -2 = vazio, >= 0 = socket válido
@@ -105,19 +105,12 @@ void* clientThread(void *data) {
     addrtostr(clientSockaddr, clientAddrStr, BUFSZ);
     printf("[log] connected from %s\n", clientAddrStr);
 
-    char buffer[BUFSZ];
-
     while(1) {
-        memset(buffer, 0, BUFSZ);
-        size_t bytesReceived = recv(cdata->clientSocket, buffer, BUFSZ, 0);
-        printf("[log] %s, %d bytes: %s\n", clientAddrStr, (int)bytesReceived, buffer);
+        command *req = (command *)malloc(sizeof(command));
+        size_t bytesReceived = recv(cdata->clientSocket, req, BUFSZ, 0);
+        printf("[log] %s, %d bytes: %s\n", clientAddrStr, (int)bytesReceived, req->message);
 
-        char *idMsg = strtok(buffer, "$");
-        char *idSender = strtok(NULL, "$");
-        char *idReceiver = strtok(NULL, "$");
-        char *message = strtok(NULL, "$");
-
-        if(strcmp(idMsg, "02") == 0) {
+        if(idMsg == 2) {
             int senderIndex = atoi(idSender);
             printf("senderIndex: %d, thisId: %d\n", senderIndex, cdata->clientIndex);
             printf("socketList: %d, thisSocket: %d\n", clients.list[senderIndex], clients.list[cdata->clientIndex]);
@@ -228,15 +221,11 @@ int main(int argc, char **argv) {
     // listen, 15 = número máximo de conexões pendentes para tratamento
     if(listen(sock, 15) != 0) msgExit("listen() failed");
 
-
     char addrstr[BUFSZ];
     addrtostr(addr, addrstr, BUFSZ);
     printf("[log] Bound to %s, waiting connections\n", addrstr);
 
     int count = 0;
-    char servBuffer[BUFSZ];
-    memset(servBuffer, 0, BUFSZ);
-    
     for(int i = 0; i < MAX_CLIENTS; i++) clients.list[i] = -2;
     clients.clientCount = 0;
 
@@ -254,12 +243,17 @@ int main(int argc, char **argv) {
         }
         printf("[log] Connection accepted\n");
 
-        memset(servBuffer, 0, BUFSZ);
+        command *msg = (command *)malloc(sizeof(command));
         if(clients.clientCount == MAX_CLIENTS) {
-            sprintf(servBuffer, "07$_$16$01$");
-            count = send(clientSocket, servBuffer, strlen(servBuffer)+1, 0);
-            if(count != strlen(servBuffer)+1) msgExit("send() failed");
+            msg->id = 7;
+            msg->idSender = -1;
+            msg->idReceiver = -1;
+            sprintf(msg->message, "01");
+
+            count = send(clientSocket, msg, sizeof(command), 0);
+            if(count != sizeof(command)) msgExit("send() failed");
             close(clientSocket);
+            free(msg);
             continue;
         }
 
@@ -277,45 +271,55 @@ int main(int argc, char **argv) {
             }
         }
         cdata->clientIndex = index;
-
-        memset(servBuffer, 0, BUFSZ);
         printf("User %02d added\n", index+1);
-        sprintf(servBuffer, "06$%d$_$User %02d joined the group!\n$", index, index+1);
+
+        msg->idMsg = 6;
+        msg->idSender = index;
+        msg->idReceiver = -1;
+        sprintf(msg->message, "User %02d joined the group!\n", index+1);
 
         // broadcast message indicating new user to all active users
         for(int j = 0; j < MAX_CLIENTS; j++) {
             if(clients.list[j] != -2) {
                 printf("Sending broadcast to socket %d\n", clients.list[j]);
-                count = send(clients.list[j], servBuffer, strlen(servBuffer)+1, 0);
-                if(count != strlen(servBuffer)+1) msgExit("send() failed");
+                count = send(clients.list[j], msg, sizeof(command), 0);
+                if(count != sizeof(command)) msgExit("send() failed");
             }
         }
-
-        usleep(1000);
 
         // send the updated list of clients to the new user
-        memset(servBuffer, 0, BUFSZ);
-        sprintf(servBuffer, "04$_$_$");
+        msg->idMsg = 4;
+        msg->idSender = -1;
+        msg->idReceiver = -1;
+
+        int first = 1;
         for(int j = 0; j < MAX_CLIENTS; j++) {
             if(clients.list[j] != -2) {
-                char temp[5];
-                sprintf(temp, "%d,", j);
-                strcat(servBuffer, temp);
+                if(first) sprintf(msg->message, "%d,", j);
+                else {
+                    char temp[3];
+                    sprintf(temp, "%d,", j);
+                    strcat(msg->message, temp);
+                }
+                first = 0;
             }
         }
-        strcat(servBuffer, "$");
-        printf("Sending list %s to user %d\n", servBuffer, clients.list[index]);
-        count = send(clients.list[index], servBuffer, strlen(servBuffer)+1, 0);
-        if(count != strlen(servBuffer)+1) msgExit("send() failed");
+
+        printf("Sending list %s to user %d\n", msg->message, clients.list[index]);
+        count = send(clients.list[index], msg, sizeof(command), 0);
+        if(count != sizeof(command)) msgExit("send() failed");
 
         pthread_t tid;
         if(pthread_create(&tid, NULL, clientThread, cdata) != 0){
             clients.list[index] = -2;
             clients.clientCount--;
+            free(msg);
             free(cdata);
             close(clientSocket);
             msgExit("pthread_create() failed");
         }
+
+        free(msg);
     }
     close(sock);
     exit(EXIT_SUCCESS);
