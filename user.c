@@ -93,7 +93,7 @@ typedef struct command{
     int idMsg;
     int idSender;
     int idReceiver; 
-    char message[BUFSZ]; 
+    char message[BUFSZ - 3 * sizeof(int)]; 
 } command;
 
 int clientIndexes[MAX_CLIENTS];
@@ -111,21 +111,35 @@ void* processStdin(void *sockNum) {
 
         command *req = (command *)malloc(sizeof(command));
         if(strncmp(buffer, "close connection", 16) == 0) {
-            if(strlen(buffer) > 17) continue;
-            else if(buffer[strlen(buffer) - 1] != "\n") continue;
+            if(strlen(buffer) > 17) {
+                free(req);
+                continue;
+            }
+            else if(strlen(buffer) == 17 && buffer[strlen(buffer) - 1] != '\n') {
+                free(req);
+                continue;
+            }
 
+            printf("size of req: %ld", sizeof(req));
             req->idMsg = 2;
             req->idSender = thisClientIndex;
             req->idReceiver = -1;
-            memset(req->message, 0, BUFSZ);
+            memset(req->message, 0, BUFSZ - 3 * sizeof(int));
+            // printf("size of req: %ld", sizeof(req));
 
             count = send(sock, req, sizeof(command), 0);
             if(count != sizeof(command)) msgExit("send() failed, msg size mismatch");
         }
 
         if(strncmp(buffer, "list users", 10) == 0) {
-            if(strlen(buffer) > 11) continue;
-            else if(buffer[strlen(buffer) - 1] != "\n") continue;
+            if(strlen(buffer) > 11) {
+                free(req);
+                continue;
+            }
+            else if(strlen(buffer) == 11 && buffer[strlen(buffer) - 1] != '\n') {
+                free(req);
+                continue;
+            }
 
             int foundOne = 0;
             for(int i = 0; i < MAX_CLIENTS; i++) {
@@ -142,19 +156,38 @@ void* processStdin(void *sockNum) {
             char *token = strtok(buffer, " "); // send
             token = strtok(NULL, " ");         // to
             token = strtok(NULL, " ");         // dest
-            if(token == NULL) continue;
+            if(token == NULL) {
+                free(req);
+                continue;
+            }
 
-            // int idUserDest = atoi(token) - 1;
             req->idReceiver = atoi(token) - 1;
             token = strtok(NULL, "");          // msg
-            if(token == NULL) continue;
+            if(token == NULL) {
+                free(req);
+                continue;
+            }
 
-            req->idMsg = 1;
+            req->idMsg = 6;
             req->idSender = thisClientIndex;
-            strcpy(req->message, token);
+            memset(req->message, 0, BUFSZ - 3 * sizeof(int));
+            sprintf(req->message, "%s", token);
+            req->message[strlen(req->message)] = '\0';
+
+            time_t rawtime;
+            struct tm *timeinfo;
+            time(&rawtime);
+            timeinfo = localtime(&rawtime);
+            char timeStr[6];
+            strftime(timeStr, 6, "%H:%M", timeinfo);
+            printf("P [%s] -> %02d: %s", timeStr, req->idReceiver+1, req->message);
 
             count = send(sock, req, sizeof(command), 0);
             if(count != sizeof(command)) msgExit("send() failed, msg size mismatch");
+        }
+
+        if(strncmp("send all ", 9) == 0) {
+            printf("send all");
         }
 
         free(req);
@@ -182,7 +215,18 @@ int main(int argc, char **argv) {
 
     char addrstr[BUFSZ];
     addrtostr(addr, addrstr, BUFSZ);
-    // printf("Connected to %s\n", addrstr);
+    int count = 0;
+    printf("Connected to %s\n", addrstr);
+
+    command *reqAdd = (command *)malloc(sizeof(command));
+    reqAdd->idMsg = 1;
+    reqAdd->idSender = -1;
+    reqAdd->idReceiver = -1;
+    memset(reqAdd->message, 0, BUFSZ - 3 * sizeof(int));
+
+    count = send(sock, reqAdd, sizeof(command), 0);
+    if(count != sizeof(command)) msgExit("send() failed, msg size mismatch");
+    free(reqAdd);
 
     // char bufferRes[BUFSZ];
     for(int i = 0; i < MAX_CLIENTS; i++) clientIndexes[i] = 0;
@@ -203,7 +247,10 @@ int main(int argc, char **argv) {
         // }
         // int count = recv(sock, bufferRes, BUFSZ+1, 0);
         command *res = (command*)malloc(sizeof(command)); 
-        int count = recv(sock, res, sizeof(command), 0);
+        count = recv(sock, res, sizeof(command), 0);
+        if(count != sizeof(command)) msgExit("recv() failed, msg size mismatch");
+
+        printf("res message: %s\n", res->message);
 
         if(res->idMsg == 2) {
             clientIndexes[res->idSender] = 0;
@@ -219,26 +266,29 @@ int main(int argc, char **argv) {
         if(res->idMsg == 6) {
             time_t rawtime;
             struct tm *timeinfo;
-            time(&rawtime);
             
-            if(res->idReceiver == -1) { // Abertura de conexão ou Mensagem Pública
-                if(thisClientIndex == -2) { // Abertura de conexão
+            if(res->idReceiver == -2) { // broadcast de nova conexão
+                if(thisClientIndex == -2) { // Atribuição de id para este cliente caso ainda não esteja definido (recém conectado)
                     thisClientIndex = res->idSender;
-                    clientIndexes[res->idSender] = 1;
                 }
-                else { // Mensagem Pública
-                    timeinfo = localtime(&rawtime);
-                    char timeStr[6];
-                    strftime(timeStr, 6, "%H:%M", timeinfo);
-                    printf("[%s] %02d: %s", timeStr, res->idSender+1, res->message);
-                }
+                clientIndexes[res->idSender] = 1;
+                printf("%s", res->message);
             }
-            else { // Mensagem Privada
+            else if(res->idReceiver == -1) { // broadcast de mensagem pública
+                time(&rawtime);
+                timeinfo = localtime(&rawtime);
+                char timeStr[6];
+                strftime(timeStr, 6, "%H:%M", timeinfo);
+                if(res->idSender == thisClientIndex) printf("[%s] -> all: %s", timeStr, res->message);
+                else printf("[%s] %02d: %s", timeStr, res->idSender+1, res->message);
+            }
+            else if(res->idSender != thisClientIndex) { // Mensagem Privada chegou
+                time(&rawtime);
                 timeinfo = localtime(&rawtime);
                 char timeStr[6];
                 strftime(timeStr, 6, "%H:%M", timeinfo);
                 printf("P [%s] %02d: %s", timeStr, res->idSender+1, res->message);
-            };
+            }
         }
         if(res->idMsg == 7) {
             if(strcmp(res->message, "01") == 0) {
