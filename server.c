@@ -103,97 +103,128 @@ void* clientThread(void *data) {
 
     char clientAddrStr[BUFSZ];
     addrtostr(clientSockaddr, clientAddrStr, BUFSZ);
-    printf("[log] connected from %s\n", clientAddrStr);
+    // printf("[log] connected from %s\n", clientAddrStr);
 
-    command *req = (command *)malloc(sizeof(command));
-    command *res = (command *)malloc(sizeof(command));
+    // command *req = (command *)malloc(sizeof(command));
+    // command *res = (command *)malloc(sizeof(command));
 
     while(1) {
+        command *req = (command *)malloc(sizeof(command));
+        // command *res = (command *)malloc(sizeof(command));
         size_t bytesReceived = recv(cdata->clientSocket, req, sizeof(command), 0);
         if(bytesReceived != sizeof(command)) msgExit("recv() failed");
         // printf("size of req: %ld", sizeof(req));
-        printf("[log] %s, %d bytes: %s\n", clientAddrStr, (int)bytesReceived, req->message);
+        // printf("[log] %s, %d bytes: %s\n", clientAddrStr, (int)bytesReceived, req->message);
 
         if(req->idMsg == 2) {
             // printf("senderIndex: %d, thisId: %d\n", senderIndex, cdata->clientIndex);
             // printf("socketList: %d, thisSocket: %d\n", clients.list[senderIndex], clients.list[cdata->clientIndex]);
             if(clients.list[req->idSender] == -2) {
-                res->idMsg = 7;
-                res->idSender = -1;
-                res->idReceiver = req->idSender;
-                sprintf(res->message, "02");
+                req->idMsg = 7;
+                req->idReceiver = req->idSender; // os dois apontam para o mesmo lugar!!!
+                req->idSender = -1;
+                sprintf(req->message, "02");
 
-                bytesReceived = send(cdata->clientSocket, res, sizeof(command), 0);
+                bytesReceived = send(cdata->clientSocket, req, sizeof(command), 0);
                 if(bytesReceived != sizeof(command)) msgExit("send() failed");
                 if(bytesReceived == 0) break;
 
+                free(req);
+                // free(req);
                 continue;
             }
             else {
+                // printf("index to be removed: %d\n", req->idSender);
                 clients.list[req->idSender] = -2;
 
-                res->idMsg = 8;
-                res->idSender = -1;
-                res->idReceiver = req->idSender;
-                sprintf(res->message, "01");
+                req->idMsg = 8;
+                char auxIdSender[3];
+                char auxIdReceiver[3];
+                sprintf(auxIdSender, "%d", req->idSender);
+                sprintf(auxIdReceiver, "%d", req->idReceiver);
+                req->idSender = atoi(auxIdReceiver);
+                req->idReceiver = atoi(auxIdSender);
+                // req->idReceiver = req->idSender; // os dois apontam para o mesmo lugar!!!
+                // req->idSender = -1; // os dois são -1 agora!!
+                sprintf(req->message, "01");
+                // printf("id sender: %d\n", req->idSender);
+                // printf("id receiver: %d\n", req->idReceiver);
 
-                bytesReceived = send(cdata->clientSocket, res, sizeof(command), 0);
+                bytesReceived = send(cdata->clientSocket, req, sizeof(command), 0);
                 if(bytesReceived != sizeof(command)) msgExit("send() failed");
                 if(bytesReceived == 0) break;
+                // printf("index to be removed: %d\n", req->idSender);
 
-                printf("User %02d removed\n", req->idSender+1);
+                printf("User %02d removed\n", req->idReceiver+1);
 
-                res->idMsg = 2;
-                res->idSender = req->idSender;
-                res->idReceiver = -1;
-                memset(res->message, 0, BUFSZ - 3 * sizeof(int));
+                req->idMsg = 2;
+                req->idSender = atoi(auxIdSender);
+                req->idReceiver = -1;
+                memset(req->message, 0, BUFSZ - 3 * sizeof(int));
 
                 for(int i = 0; i < MAX_CLIENTS; i++) {
                     if(clients.list[i] != -2) {
-                        bytesReceived = send(clients.list[i], res, sizeof(command), 0);
+                        bytesReceived = send(clients.list[i], req, sizeof(command), 0);
                         if(bytesReceived != sizeof(command)) msgExit("send() failed");
                         if(bytesReceived == 0) break;
                     }
                 }
                 // finaliza o processo de saída de um user
+                free(req);
+                // free(res);
                 break;
             }
         }
 
         if(req->idMsg == 6) {
-            if((req->idReceiver < 0 || req->idReceiver >= MAX_CLIENTS) || clients.list[req->idReceiver] == -2) {
+            if(req->idReceiver == -1) {
+                int count = 0;
+                // req = req;
+                // printf("public message: %s", req->message);
+                for(int i = 0; i < MAX_CLIENTS; i++) {
+                    if(clients.list[i] != -2) {
+                        // printf("Sending public to socket %d\n", clients.list[i]);
+                        count = send(clients.list[i], req, sizeof(command), 0);
+                        if(count != sizeof(command)) msgExit("send() failed");
+                    }
+                }
+            }
+            else if((req->idReceiver < 0 || req->idReceiver >= MAX_CLIENTS) || clients.list[req->idReceiver] == -2) {
                 printf("User %02d not found\n", req->idReceiver+1);
 
-                res->idMsg = 7;
-                res->idSender = -1;
-                res->idReceiver = req->idReceiver;
-                sprintf(res->message, "03");
+                req->idMsg = 7;
+                req->idSender = -1;
+                // req->idReceiver = req->idReceiver;
+                sprintf(req->message, "03");
                 
-                bytesReceived = send(cdata->clientSocket, res, sizeof(command), 0);
+                bytesReceived = send(cdata->clientSocket, req, sizeof(command), 0);
                 if(bytesReceived != sizeof(command)) msgExit("send() failed");
                 if(bytesReceived == 0) break;
             }
             else {
-                res->idMsg = 6;
-                res->idSender = req->idSender;
-                res->idReceiver = req->idReceiver;
-                sprintf(res->message, "%s", req->message);
+                req->idMsg = 6;
+                // req->idSender = req->idSender;
+                // req->idReceiver = req->idReceiver;
+                // sprintf(res->message, "%s", req->message);
 
                 // echo para o cliente que enviou a mensagem
-                bytesReceived = send(cdata->clientSocket, res, sizeof(command), 0);
+                bytesReceived = send(cdata->clientSocket, req, sizeof(command), 0);
                 if(bytesReceived != sizeof(command)) msgExit("send() failed");
                 if(bytesReceived == 0) break;
 
                 // então envia de fato a mensagem para o remetente
-                bytesReceived = send(clients.list[req->idReceiver], res, sizeof(command), 0);
+                bytesReceived = send(clients.list[req->idReceiver], req, sizeof(command), 0);
                 if(bytesReceived != sizeof(command)) msgExit("send() failed");
                 if(bytesReceived == 0) break;
             }
         }
+
+        free(req);
+        // free(res);
     }
 
-    free(req);
-    free(res);
+    // free(req);
+    // free(res);
     close(cdata->clientSocket);
     clients.clientCount--;
     clients.list[cdata->clientIndex] = -2;
@@ -226,7 +257,7 @@ int main(int argc, char **argv) {
 
     char addrstr[BUFSZ];
     addrtostr(addr, addrstr, BUFSZ);
-    printf("[log] Bound to %s, waiting connections\n", addrstr);
+    // printf("[log] Bound to %s, waiting connections\n", addrstr);
 
     int count = 0;
     for(int i = 0; i < MAX_CLIENTS; i++) clients.list[i] = -2;
@@ -238,13 +269,13 @@ int main(int argc, char **argv) {
         socklen_t clientAddrLen = sizeof(clientStorage);
 
         // accept, Socket que conversa com cliente
-        printf("[log] Waiting for connections...\n");
+        // printf("[log] Waiting for connections...\n");
         int clientSocket = accept(sock, clientSockaddr, &clientAddrLen);
         if(clientSocket == -1) {
             close(sock);
             msgExit("accept() failed");
         }
-        printf("[log] Connection accepted\n");
+        // printf("[log] Connection accepted\n");
 
         command *reqAdd = (command *)malloc(sizeof(command));
         count = recv(clientSocket, reqAdd, sizeof(command), 0);
@@ -302,7 +333,7 @@ int main(int argc, char **argv) {
         // broadcast message indicating new user to all active users
         for(int j = 0; j < MAX_CLIENTS; j++) {
             if(clients.list[j] != -2) {
-                printf("Sending broadcast to socket %d\n", clients.list[j]);
+                // printf("Sending broadcast to socket %d\n", clients.list[j]);
                 count = send(clients.list[j], msg, sizeof(command), 0);
                 if(count != sizeof(command)) msgExit("send() failed");
             }
@@ -326,7 +357,7 @@ int main(int argc, char **argv) {
             }
         }
 
-        printf("Sending list %s to user %d\n", msg->message, clients.list[index]);
+        // printf("Sending list %s to user %d\n", msg->message, clients.list[index]);
         count = send(clients.list[index], msg, sizeof(command), 0);
         if(count != sizeof(command)) msgExit("send() failed");
 

@@ -120,7 +120,7 @@ void* processStdin(void *sockNum) {
                 continue;
             }
 
-            printf("size of req: %ld", sizeof(req));
+            // printf("size of req: %ld", sizeof(req));
             req->idMsg = 2;
             req->idSender = thisClientIndex;
             req->idReceiver = -1;
@@ -172,7 +172,7 @@ void* processStdin(void *sockNum) {
             req->idSender = thisClientIndex;
             memset(req->message, 0, BUFSZ - 3 * sizeof(int));
             sprintf(req->message, "%s", token);
-            req->message[strlen(req->message)] = '\0';
+            // req->message[strlen(req->message)] = '\0';
 
             time_t rawtime;
             struct tm *timeinfo;
@@ -187,7 +187,22 @@ void* processStdin(void *sockNum) {
         }
 
         if(strncmp(buffer, "send all ", 9) == 0) {
-            printf("send all");
+            char *token = strtok(buffer, " "); // send
+            token = strtok(NULL, " ");         // all
+            token = strtok(NULL, "");          // msg
+            if(token == NULL) {
+                free(req);
+                continue;
+            }
+
+            req->idMsg = 6;
+            req->idSender = thisClientIndex;
+            req->idReceiver = -1;
+            memset(req->message, 0, BUFSZ - 3 * sizeof(int));
+            sprintf(req->message, "%s", token);
+            
+            count = send(sock, req, sizeof(command), 0);
+            if(count != sizeof(command)) msgExit("send() failed, msg size mismatch");
         }
 
         free(req);
@@ -216,7 +231,7 @@ int main(int argc, char **argv) {
     char addrstr[BUFSZ];
     addrtostr(addr, addrstr, BUFSZ);
     int count = 0;
-    printf("Connected to %s\n", addrstr);
+    // printf("Connected to %s\n", addrstr);
 
     command *reqAdd = (command *)malloc(sizeof(command));
     reqAdd->idMsg = 1;
@@ -250,7 +265,7 @@ int main(int argc, char **argv) {
         count = recv(sock, res, sizeof(command), 0);
         if(count != sizeof(command)) msgExit("recv() failed, msg size mismatch");
 
-        printf("res message: %s\n", res->message);
+        // printf("res message: %s\n", res->message);
 
         if(res->idMsg == 2) {
             clientIndexes[res->idSender] = 0;
@@ -293,6 +308,7 @@ int main(int argc, char **argv) {
         if(res->idMsg == 7) {
             if(strcmp(res->message, "01") == 0) {
                 printf("User limit exceeded\n");
+                free(res);
                 break;
             }
             if(strcmp(res->message, "02") == 0) {
@@ -304,11 +320,12 @@ int main(int argc, char **argv) {
         }
         if(res->idMsg == 8) {
             printf("Removed Successfully\n");
+            free(res);
             break;
         }
-        printf("Client indexes: \n");
-        for(int i = 0; i < MAX_CLIENTS; i++) printf("%d\n", clientIndexes[i]);
-        printf("This client index: %d\n", thisClientIndex);
+        // printf("Client indexes: \n");
+        // for(int i = 0; i < MAX_CLIENTS; i++) printf("%d\n", clientIndexes[i]);
+        // printf("This client index: %d\n", thisClientIndex);
         free(res);
     }
 
