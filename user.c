@@ -186,7 +186,7 @@ void* processStdin(void *sockNum) {
             if(count != sizeof(command)) msgExit("send() failed, msg size mismatch");
         }
 
-        if(strncmp("send all ", 9) == 0) {
+        if(strncmp(buffer, "send all ", 9) == 0) {
             printf("send all");
         }
 
