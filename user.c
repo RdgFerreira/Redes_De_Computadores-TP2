@@ -172,15 +172,6 @@ void* processStdin(void *sockNum) {
             req->idSender = thisClientIndex;
             memset(req->message, 0, BUFSZ - 3 * sizeof(int));
             sprintf(req->message, "%s", token);
-            // req->message[strlen(req->message)] = '\0';
-
-            time_t rawtime;
-            struct tm *timeinfo;
-            time(&rawtime);
-            timeinfo = localtime(&rawtime);
-            char timeStr[6];
-            strftime(timeStr, 6, "%H:%M", timeinfo);
-            printf("P [%s] -> %02d: %s", timeStr, req->idReceiver+1, req->message);
 
             count = send(sock, req, sizeof(command), 0);
             if(count != sizeof(command)) msgExit("send() failed, msg size mismatch");
@@ -281,28 +272,27 @@ int main(int argc, char **argv) {
         if(res->idMsg == 6) {
             time_t rawtime;
             struct tm *timeinfo;
+            time(&rawtime);
+            timeinfo = localtime(&rawtime);
+            char timeStr[6];
+            strftime(timeStr, 6, "%H:%M", timeinfo);
             
-            if(res->idReceiver == -2) { // broadcast de nova conexão
+            if(clientIndexes[res->idSender] == 0) { // broadcast de nova conexão (remetente da mensagem é desconhecido por este cliente)
+                clientIndexes[res->idSender] = 1; // marca como conhecido
                 if(thisClientIndex == -2) { // Atribuição de id para este cliente caso ainda não esteja definido (recém conectado)
                     thisClientIndex = res->idSender;
                 }
-                clientIndexes[res->idSender] = 1;
-                printf("%s", res->message);
+                printf("%s", res->message); // User {idSender} joined the group!
             }
             else if(res->idReceiver == -1) { // broadcast de mensagem pública
-                time(&rawtime);
-                timeinfo = localtime(&rawtime);
-                char timeStr[6];
-                strftime(timeStr, 6, "%H:%M", timeinfo);
                 if(res->idSender == thisClientIndex) printf("[%s] -> all: %s", timeStr, res->message);
                 else printf("[%s] %02d: %s", timeStr, res->idSender+1, res->message);
             }
-            else if(res->idSender != thisClientIndex) { // Mensagem Privada chegou
-                time(&rawtime);
-                timeinfo = localtime(&rawtime);
-                char timeStr[6];
-                strftime(timeStr, 6, "%H:%M", timeinfo);
+            else if(res->idSender != thisClientIndex) { // Mensagem Privada chegou de outro cliente
                 printf("P [%s] %02d: %s", timeStr, res->idSender+1, res->message);
+            }
+            else { // echo de mensagem privada para este cliente
+                printf("P [%s] -> %02d: %s", timeStr, res->idReceiver+1, res->message);
             }
         }
         if(res->idMsg == 7) {

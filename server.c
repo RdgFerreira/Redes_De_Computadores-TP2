@@ -180,7 +180,14 @@ void* clientThread(void *data) {
             if(req->idReceiver == -1) {
                 int count = 0;
                 // req = req;
-                // printf("public message: %s", req->message);
+                time_t rawtime;
+                struct tm *timeinfo;
+                time(&rawtime);
+                timeinfo = localtime(&rawtime);
+                char timeStr[6];
+                strftime(timeStr, 6, "%H:%M", timeinfo);
+                printf("[%s] %02d: %s", timeStr, req->idSender+1, req->message);
+                
                 for(int i = 0; i < MAX_CLIENTS; i++) {
                     if(clients.list[i] != -2) {
                         // printf("Sending public to socket %d\n", clients.list[i]);
@@ -327,7 +334,7 @@ int main(int argc, char **argv) {
 
         msg->idMsg = 6;
         msg->idSender = index;
-        msg->idReceiver = -2; // -2 indica broadcast de novo user, -1 indica broadcast de mensagem global
+        msg->idReceiver = -1;
         sprintf(msg->message, "User %02d joined the group!\n", index+1);
 
         // broadcast message indicating new user to all active users
