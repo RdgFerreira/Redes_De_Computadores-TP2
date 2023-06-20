@@ -10,9 +10,12 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 
+// Constante representante do tamanho máximo de uma mensagem
 #define BUFSZ 2048
-#define MAX_CLIENTS 3
+// Constante representante do número máximo de clientes simultâneos
+#define MAX_CLIENTS 15
 
+// Função que imprime na tela exemplos de argumentos corretos para a execução de um servidor
 void usageExit(int argc, char **argv) {
     printf("Server usage: %s <v4|v6> <server port>\n", argv[0]);
     printf("Ex: %s v4 51511\n", argv[0]);
@@ -20,11 +23,13 @@ void usageExit(int argc, char **argv) {
     exit(EXIT_FAILURE);
 }
 
+// Impressão de mensagem de erro caso alguma função do framework de sockets ou threads retorne erro
 void msgExit(const char *msg) {
     perror(msg);
     exit(EXIT_FAILURE);
 }
 
+// Inicialização do endereçamento do servidor, IPv4 e IPv6
 int serverAddrInit(const char *proto, const char *portstr, struct sockaddr_storage *storage) {
     // AF_INET = IPv4, AF_INET6 = IPv6
     if(proto == NULL || portstr == NULL) return -1;
@@ -50,6 +55,7 @@ int serverAddrInit(const char *proto, const char *portstr, struct sockaddr_stora
     else return -1;
 }
 
+// Recuperação do endereço do servidor em formato de string
 void addrtostr(const struct sockaddr *addr, char *str, size_t strsize) {
     int version;
     char addrstr[INET6_ADDRSTRLEN + 1] = ""; // pode ser IPv4 ou IPv6
@@ -76,6 +82,13 @@ void addrtostr(const struct sockaddr *addr, char *str, size_t strsize) {
     if(str) snprintf(str, strsize, "IPv%d %s %hu", version, addrstr, port);
 }
 
+// Estrutura de dados que encapsula os conteúdos essenciais de um comando:
+// idMsg: identificador da mensagem;
+// idSender: identificador do remetente (0 -> 14, ou -1 quando este campo == NULL);
+// idReceiver: identificador do destinatário (0 -> 14, ou -1 quando este campo == NULL),
+// message: O conteúdo textual da mensagem em si.
+// Note que o tamanho máximo do campo mensagem do comando é o tamanho máximo definido acima (2048)
+// descontado de 12 bytes dos 3 inteiros usados para identificar a mensagem, o remetente e o destinatário.
 typedef struct command{
     int idMsg;
     int idSender;
@@ -83,60 +96,70 @@ typedef struct command{
     char message[BUFSZ - 3 * sizeof(int)]; 
 } command;
 
+
+// Estrutura de dados que controla quantos e quais clientes estão conectados:
+// list: lista de inteiros que contêm -2 ou números de sockets de clientes válidos, 
+// indexados diretamente pelos identificadores de clientes recuperados pelos comandos recebidos
+// clientCount: contador de clientes ativos atualmente 
 typedef struct clientSockets {
     // -2 = vazio, >= 0 = socket válido
     int list[MAX_CLIENTS];
     int clientCount;
 } clientSockets;
 
+// Inicialização global da estrutura acima 
 clientSockets clients;
 
+// Estrutura de dados auxiliar que contém informações úteis para um cliente específico:
+// clientSocket: número do socket deste cliente
+// clientIndex: identificador deste cliente
+// clientStorage: estrutura do framework de sockets que abstrai o endereço deste cliente
 struct clientData {
     int clientSocket;
     int clientIndex;
     struct sockaddr_storage clientStorage;
 };
 
+// Função principal das threads que gerenciam os múltiplos clientes 
 void* clientThread(void *data) {
     struct clientData *cdata = (struct clientData *)data;
     struct sockaddr *clientSockaddr = (struct sockaddr *)(&cdata->clientStorage);
 
     char clientAddrStr[BUFSZ];
     addrtostr(clientSockaddr, clientAddrStr, BUFSZ);
-    // printf("[log] connected from %s\n", clientAddrStr);
 
-    // command *req = (command *)malloc(sizeof(command));
-    // command *res = (command *)malloc(sizeof(command));
-
+    // loop principal de recepção de comandos do cliente e resposta do servidor
     while(1) {
+        // Cada iteração criamos uma nova estrutura auxiliar de comando para recepção e resposta
+        // lendo, processando e escrevendo os campos adequadamente.
         command *req = (command *)malloc(sizeof(command));
-        // command *res = (command *)malloc(sizeof(command));
         size_t bytesReceived = recv(cdata->clientSocket, req, sizeof(command), 0);
         if(bytesReceived != sizeof(command)) msgExit("recv() failed");
-        // printf("size of req: %ld", sizeof(req));
-        // printf("[log] %s, %d bytes: %s\n", clientAddrStr, (int)bytesReceived, req->message);
 
-        if(req->idMsg == 2) {
-            // printf("senderIndex: %d, thisId: %d\n", senderIndex, cdata->clientIndex);
-            // printf("socketList: %d, thisSocket: %d\n", clients.list[senderIndex], clients.list[cdata->clientIndex]);
-            if(clients.list[req->idSender] == -2) {
+        if(req->idMsg == 2) { // Recepção do comando REQ_REM(idUser_i, -1, "");
+            if(clients.list[req->idSender] == -2) { // Usuário solicitante da remoção não está presente na base de clientes do servidor
+                // Montagem do comando de resposta ERROR(-1, idUser_i, "02");
                 req->idMsg = 7;
-                req->idReceiver = req->idSender; // os dois apontam para o mesmo lugar!!!
-                req->idSender = -1;
+                char auxIdSender[3];
+                sprintf(auxIdSender, "%d", req->idSender);
+                req->idReceiver = atoi(auxIdSender);
+                // Note que apenas o código de erro é enviado, o cliente conhece as mensagens associadas aos códigos e os imprime adequadamente
+                // Este comportamento segue ao longo do código do servidor
                 sprintf(req->message, "02");
 
+                // Envio da Resposta
                 bytesReceived = send(cdata->clientSocket, req, sizeof(command), 0);
                 if(bytesReceived != sizeof(command)) msgExit("send() failed");
                 if(bytesReceived == 0) break;
 
                 free(req);
-                // free(req);
                 continue;
             }
-            else {
-                // printf("index to be removed: %d\n", req->idSender);
+            else { // Usuário está na base e, então, inicia-se o processo de remoção.
+                // Marca o socket na lista como vazio na posição indexada pelo identificador do cliente solicitante
                 clients.list[req->idSender] = -2;
 
+                // Montagem e envio do comando de resposta OK(-1, idUser_i, "01")
                 req->idMsg = 8;
                 char auxIdSender[3];
                 char auxIdReceiver[3];
@@ -144,24 +167,22 @@ void* clientThread(void *data) {
                 sprintf(auxIdReceiver, "%d", req->idReceiver);
                 req->idSender = atoi(auxIdReceiver);
                 req->idReceiver = atoi(auxIdSender);
-                // req->idReceiver = req->idSender; // os dois apontam para o mesmo lugar!!!
-                // req->idSender = -1; // os dois são -1 agora!!
                 sprintf(req->message, "01");
-                // printf("id sender: %d\n", req->idSender);
-                // printf("id receiver: %d\n", req->idReceiver);
 
                 bytesReceived = send(cdata->clientSocket, req, sizeof(command), 0);
                 if(bytesReceived != sizeof(command)) msgExit("send() failed");
                 if(bytesReceived == 0) break;
-                // printf("index to be removed: %d\n", req->idSender);
 
+                // Mensagem padrão de remoção de um cliente no terminal do servidor
                 printf("User %02d removed\n", req->idReceiver+1);
 
+                // Montagem e envio broadcast do comando REQ_REM(id_User_i, -1, "")
                 req->idMsg = 2;
                 req->idSender = atoi(auxIdSender);
                 req->idReceiver = -1;
                 memset(req->message, 0, BUFSZ - 3 * sizeof(int));
 
+                // Percorre a estrutura de lista de clientes e envia a mensagem para todos os clientes ativos
                 for(int i = 0; i < MAX_CLIENTS; i++) {
                     if(clients.list[i] != -2) {
                         bytesReceived = send(clients.list[i], req, sizeof(command), 0);
@@ -169,39 +190,40 @@ void* clientThread(void *data) {
                         if(bytesReceived == 0) break;
                     }
                 }
-                // finaliza o processo de saída de um user
+                // finaliza o processo de saída de um cliente
                 free(req);
-                // free(res);
                 break;
             }
         }
 
-        if(req->idMsg == 6) {
-            if(req->idReceiver == -1) {
-                int count = 0;
-                // req = req;
+        if(req->idMsg == 6) { // Recepção do comando MSG(idUser_i, idUser_j, "mensagem")
+            if(req->idReceiver == -1) { // Se o campo de remetente for NULL (-1), trata-se de uma mensagem pública
                 time_t rawtime;
                 struct tm *timeinfo;
                 time(&rawtime);
                 timeinfo = localtime(&rawtime);
                 char timeStr[6];
                 strftime(timeStr, 6, "%H:%M", timeinfo);
+                // Impressão da mensagem pública com o timestamp do sistema
                 printf("[%s] %02d: %s", timeStr, req->idSender+1, req->message);
                 
+                // Envio da mensagem recebida via broadcast para os clientes ativos
                 for(int i = 0; i < MAX_CLIENTS; i++) {
                     if(clients.list[i] != -2) {
-                        // printf("Sending public to socket %d\n", clients.list[i]);
-                        count = send(clients.list[i], req, sizeof(command), 0);
-                        if(count != sizeof(command)) msgExit("send() failed");
+                        bytesReceived = send(clients.list[i], req, sizeof(command), 0);
+                        if(bytesReceived != sizeof(command)) msgExit("send() failed");
                     }
                 }
             }
             else if((req->idReceiver < 0 || req->idReceiver >= MAX_CLIENTS) || clients.list[req->idReceiver] == -2) {
+                // Se o idUser_j (Destinatário) for um identificador inválido, ou seja, menor que -1,
+                // maior que o maior identificador possível (14) ou o valor indexado por ele na lista de
+                // clientes contém um socket vazio, então este usuário não foi encontrado.
                 printf("User %02d not found\n", req->idReceiver+1);
 
+                // Montagem e resposta para o cliente remetente do comando ERROR(03)
                 req->idMsg = 7;
                 req->idSender = -1;
-                // req->idReceiver = req->idReceiver;
                 sprintf(req->message, "03");
                 
                 bytesReceived = send(cdata->clientSocket, req, sizeof(command), 0);
@@ -209,17 +231,12 @@ void* clientThread(void *data) {
                 if(bytesReceived == 0) break;
             }
             else {
-                req->idMsg = 6;
-                // req->idSender = req->idSender;
-                // req->idReceiver = req->idReceiver;
-                // sprintf(res->message, "%s", req->message);
-
-                // echo para o cliente que enviou a mensagem
+                // echo para o cliente remetente
                 bytesReceived = send(cdata->clientSocket, req, sizeof(command), 0);
                 if(bytesReceived != sizeof(command)) msgExit("send() failed");
                 if(bytesReceived == 0) break;
 
-                // então envia de fato a mensagem para o remetente
+                // então envia de fato a mensagem para o destinatário
                 bytesReceived = send(clients.list[req->idReceiver], req, sizeof(command), 0);
                 if(bytesReceived != sizeof(command)) msgExit("send() failed");
                 if(bytesReceived == 0) break;
@@ -227,11 +244,8 @@ void* clientThread(void *data) {
         }
 
         free(req);
-        // free(res);
     }
 
-    // free(req);
-    // free(res);
     close(cdata->clientSocket);
     clients.clientCount--;
     clients.list[cdata->clientIndex] = -2;

@@ -12,7 +12,7 @@
 #include <pthread.h>
 
 #define BUFSZ 2048
-#define MAX_CLIENTS 3
+#define MAX_CLIENTS 15
 
 void usageExit(int argc, char **argv) {
     printf("Client usage: %s <server IP> <server port>\n", argv[0]);
@@ -120,12 +120,10 @@ void* processStdin(void *sockNum) {
                 continue;
             }
 
-            // printf("size of req: %ld", sizeof(req));
             req->idMsg = 2;
             req->idSender = thisClientIndex;
             req->idReceiver = -1;
             memset(req->message, 0, BUFSZ - 3 * sizeof(int));
-            // printf("size of req: %ld", sizeof(req));
 
             count = send(sock, req, sizeof(command), 0);
             if(count != sizeof(command)) msgExit("send() failed, msg size mismatch");
@@ -143,7 +141,7 @@ void* processStdin(void *sockNum) {
 
             int foundOne = 0;
             for(int i = 0; i < MAX_CLIENTS; i++) {
-                if(clientIndexes[i] != 0) {
+                if(clientIndexes[i] != 0 && i != thisClientIndex) {
                     if(foundOne) printf(" %02d", i+1);
                     else printf("%02d", i+1);
                     foundOne = 1;
@@ -162,11 +160,14 @@ void* processStdin(void *sockNum) {
             }
 
             req->idReceiver = atoi(token) - 1;
-            token = strtok(NULL, "");          // msg
-            if(token == NULL) {
+            token = strtok(NULL, "");
+            if(token == NULL || !(token[strlen(token) - 1] == '\"' || (token[strlen(token) - 2] == '\"' && token[strlen(token) - 1] == '\n'))) {
                 free(req);
                 continue;
             }
+            token += 1;
+            token[strlen(token) - 2] = '\n';
+            token[strlen(token) - 1] = '\0';
 
             req->idMsg = 6;
             req->idSender = thisClientIndex;
@@ -178,13 +179,18 @@ void* processStdin(void *sockNum) {
         }
 
         if(strncmp(buffer, "send all ", 9) == 0) {
-            char *token = strtok(buffer, " "); // send
-            token = strtok(NULL, " ");         // all
-            token = strtok(NULL, "");          // msg
+            char *token = strtok(buffer, "\"");
             if(token == NULL) {
                 free(req);
                 continue;
             }
+            token = strtok(NULL, "");
+            if(token == NULL || !(token[strlen(token) - 1] == '\"' || (token[strlen(token) - 2] == '\"' && token[strlen(token) - 1] == '\n'))) {
+                free(req);
+                continue;
+            }
+            token[strlen(token) - 2] = '\n';
+            token[strlen(token) - 1] = '\0';
 
             req->idMsg = 6;
             req->idSender = thisClientIndex;
@@ -313,9 +319,6 @@ int main(int argc, char **argv) {
             free(res);
             break;
         }
-        // printf("Client indexes: \n");
-        // for(int i = 0; i < MAX_CLIENTS; i++) printf("%d\n", clientIndexes[i]);
-        // printf("This client index: %d\n", thisClientIndex);
         free(res);
     }
 
