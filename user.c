@@ -101,13 +101,14 @@ int thisClientIndex = -2;
 
 void* processStdin(void *sockNum) {
     int count = 0;
-    char buffer[BUFSZ];
+    unsigned total = 0;
+    char buffer[BUFSZ + 15];
     long sock = (long)sockNum;
 
     while(1) {
-        memset(buffer, 0, BUFSZ);
+        memset(buffer, 0, BUFSZ + 15);
         pthread_testcancel();
-        fgets(buffer, BUFSZ, stdin);
+        fgets(buffer, BUFSZ + 15, stdin);
 
         command *req = (command *)malloc(sizeof(command));
         if(strncmp(buffer, "close connection", 16) == 0) {
@@ -125,8 +126,12 @@ void* processStdin(void *sockNum) {
             req->idReceiver = -1;
             memset(req->message, 0, BUFSZ - 3 * sizeof(int));
 
-            count = send(sock, req, sizeof(command), 0);
-            if(count != sizeof(command)) msgExit("send() failed, msg size mismatch");
+            total = 0;
+            while(1) {
+                count = send(sock, req + total, sizeof(command) - total, 0);
+                if (count == 0 || count == sizeof(command)) break;
+                total += count;
+            }
         }
 
         if(strncmp(buffer, "list users", 10) == 0) {
@@ -151,15 +156,20 @@ void* processStdin(void *sockNum) {
         }
 
         if(strncmp(buffer, "send to ", 8) == 0) {
+            if(strlen(buffer) >= 9 && buffer[8] == ' ') {
+                free(req);
+                continue;
+            }
             char *token = strtok(buffer, " "); // send
             token = strtok(NULL, " ");         // to
             token = strtok(NULL, " ");         // dest
-            if(token == NULL) {
+            if(token == NULL || atoi(token) == 0) {
                 free(req);
                 continue;
             }
 
             req->idReceiver = atoi(token) - 1;
+
             token = strtok(NULL, "");
             if(token == NULL || !(token[strlen(token) - 1] == '\"' || (token[strlen(token) - 2] == '\"' && token[strlen(token) - 1] == '\n'))) {
                 free(req);
@@ -174,11 +184,19 @@ void* processStdin(void *sockNum) {
             memset(req->message, 0, BUFSZ - 3 * sizeof(int));
             sprintf(req->message, "%s", token);
 
-            count = send(sock, req, sizeof(command), 0);
-            if(count != sizeof(command)) msgExit("send() failed, msg size mismatch");
+            total = 0;
+            while(1) {
+                count = send(sock, req + total, sizeof(command) - total, 0);
+                if (count == 0 || count == sizeof(command)) break;
+                total += count;
+            }
         }
 
         if(strncmp(buffer, "send all ", 9) == 0) {
+            if(strlen(buffer) >= 10 && buffer[9] != '\"') {
+                free(req);
+                continue;
+            }
             char *token = strtok(buffer, "\"");
             if(token == NULL) {
                 free(req);
@@ -197,9 +215,13 @@ void* processStdin(void *sockNum) {
             req->idReceiver = -1;
             memset(req->message, 0, BUFSZ - 3 * sizeof(int));
             sprintf(req->message, "%s", token);
-            
-            count = send(sock, req, sizeof(command), 0);
-            if(count != sizeof(command)) msgExit("send() failed, msg size mismatch");
+
+            total = 0;
+            while(1) {
+                count = send(sock, req + total, sizeof(command) - total, 0);
+                if (count == 0 || count == sizeof(command)) break;
+                total += count;
+            }
         }
 
         free(req);
@@ -211,7 +233,6 @@ void* processStdin(void *sockNum) {
 
 int main(int argc, char **argv) {
     if(argc < 3 || argc > 3) usageExit(argc, argv);
-
 
     // estrutura que armazena endereço ipv4 ou ipv6
     struct sockaddr_storage storage;
@@ -228,7 +249,6 @@ int main(int argc, char **argv) {
     char addrstr[BUFSZ];
     addrtostr(addr, addrstr, BUFSZ);
     int count = 0;
-    // printf("Connected to %s\n", addrstr);
 
     command *reqAdd = (command *)malloc(sizeof(command));
     reqAdd->idMsg = 1;
@@ -240,7 +260,6 @@ int main(int argc, char **argv) {
     if(count != sizeof(command)) msgExit("send() failed, msg size mismatch");
     free(reqAdd);
 
-    // char bufferRes[BUFSZ];
     for(int i = 0; i < MAX_CLIENTS; i++) clientIndexes[i] = 0;
 
     pthread_t t_stdin;
@@ -248,21 +267,9 @@ int main(int argc, char **argv) {
     if(pthread_create(&t_stdin, NULL, processStdin, (void *)sockNum) !=0) msgExit("pthread_create() failed");
 
     while(1) {
-        // recebe mensagem do servidor e coloca em buffer em ordem
-        // variavel total é necessaria pois não recebemos tudo de uma vez
-        // memset(bufferRes, 0, BUFSZ);
-        // unsigned total = 0;
-        // while(1) {
-        //     count = recv(sock, bufferRes + total, BUFSZ - total, 0);
-        //     if (count == 0) break;
-        //     total += count;
-        // }
-        // int count = recv(sock, bufferRes, BUFSZ+1, 0);
         command *res = (command*)malloc(sizeof(command)); 
         count = recv(sock, res, sizeof(command), 0);
         if(count != sizeof(command)) msgExit("recv() failed, msg size mismatch");
-
-        // printf("res message: %s\n", res->message);
 
         if(res->idMsg == 2) {
             clientIndexes[res->idSender] = 0;
