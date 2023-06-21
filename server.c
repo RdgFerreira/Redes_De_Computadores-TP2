@@ -158,9 +158,6 @@ void* clientThread(void *data) {
                 bytesSent = send(cdata->clientSocket, req, sizeof(command), 0);
                 if(bytesSent != sizeof(command)) msgExit("send() failed");
                 if(bytesSent == 0) break;
-
-                free(req);
-                continue;
             }
             else { // Usuário está na base e, então, inicia-se o processo de remoção.
                 // Marca o socket na lista como vazio na posição indexada pelo identificador do cliente solicitante
@@ -250,9 +247,11 @@ void* clientThread(void *data) {
             }
         }
 
+        // libera a memória alocada para o comando recebido e enviado
         free(req);
     }
 
+    // Fecha o socket do cliente, marca o id deste cliente como vazio e decrementa o contador de clientes ativos
     close(cdata->clientSocket);
     clients.clientCount--;
     clients.list[cdata->clientIndex] = -2;
@@ -287,7 +286,9 @@ int main(int argc, char **argv) {
     addrtostr(addr, addrstr, BUFSZ);
 
     int count = 0;
+    // Inicialização do vetor de clientes ativos, de modo que todos os índices sejam vazios (-2)
     for(int i = 0; i < MAX_CLIENTS; i++) clients.list[i] = -2;
+    // contador de clientes inicia em 0
     clients.clientCount = 0;
 
     while(1) {
@@ -302,6 +303,7 @@ int main(int argc, char **argv) {
             msgExit("accept() failed");
         }
 
+        // Após a conclusão do bem sucedida do accept, o servidor deve receber um comando REQ_ADD e responder com um OK(-1, -1, "")
         command *reqAdd = (command *)malloc(sizeof(command));
         count = recv(clientSocket, reqAdd, sizeof(command), 0);
         if(count != sizeof(command)) msgExit("recv() failed");
@@ -320,7 +322,9 @@ int main(int argc, char **argv) {
         }
         free(reqAdd);
 
+        // Alocação dinâmica de memória para o comando de resposta
         command *msg = (command *)malloc(sizeof(command));
+        // Se a lista de clientes ativos está cheia, o cliente será desconectado e sua execução encerrada, enviando um comando ERROR(-1, -1, "01")
         if(clients.clientCount == MAX_CLIENTS) {
             msg->idMsg = 7;
             msg->idSender = -1;
@@ -334,11 +338,14 @@ int main(int argc, char **argv) {
             continue;
         }
 
+        // Definição da estrutura de dados do cliente e de seu número de socket
         struct clientData *cdata = (struct clientData *)malloc(sizeof(struct clientData));
         if(!cdata) msgExit("malloc() failed");
         cdata->clientSocket = clientSocket;
         memcpy(&(cdata->clientStorage), &clientStorage, sizeof(clientStorage));
 
+        // O primeiro índice que indica uma posição vazia no vetor de clientes ativos é preenchido com o número do socket do cliente
+        // e o contador de clientes ativos é incrementado
         int index = 0;
         for(index = 0; index < MAX_CLIENTS; index++) {
             if(clients.list[index] == -2) {
@@ -347,6 +354,7 @@ int main(int argc, char **argv) {
                 break;
             }
         }
+        // O índice de espaço vazio encontrado é o índice do cliente na lista de clientes ativos
         cdata->clientIndex = index;
         printf("User %02d added\n", index+1);
 
@@ -355,7 +363,7 @@ int main(int argc, char **argv) {
         msg->idReceiver = -1;
         sprintf(msg->message, "User %02d joined the group!\n", index+1);
 
-        // broadcast message indicating new user to all active users
+        // broadcast de uma MSG(idUser_i, -1, "User i joined the group!") para os usuários ativos da rede
         for(int j = 0; j < MAX_CLIENTS; j++) {
             if(clients.list[j] != -2) {
                 count = send(clients.list[j], msg, sizeof(command), 0);
@@ -363,7 +371,7 @@ int main(int argc, char **argv) {
             }
         }
 
-        // send the updated list of clients to the new user
+        // broadcast de uma RES_LIST(-1, -1, "i,j,k,...") para o usuário i, contendo a lista de usuários i,j,k,... ativos da rede
         msg->idMsg = 4;
         msg->idSender = -1;
         msg->idReceiver = -1;
@@ -381,10 +389,10 @@ int main(int argc, char **argv) {
             }
         }
 
-        // printf("Sending list %s to user %d\n", msg->message, clients.list[index]);
         count = send(clients.list[index], msg, sizeof(command), 0);
         if(count != sizeof(command)) msgExit("send() failed");
 
+        // Criação da thread que trata as requisições e respostas de cada cliente
         pthread_t tid;
         if(pthread_create(&tid, NULL, clientThread, cdata) != 0){
             clients.list[index] = -2;

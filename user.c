@@ -96,22 +96,35 @@ typedef struct command{
     char message[BUFSZ - 3 * sizeof(int)]; 
 } command;
 
+// Array de clientes conectados ao servidor registrados neste cliente. 
+// clientIndexes[i] = 0 se o cliente i não está conectado.
+// clientIndexes[i] = 1 se o cliente i está conectado.
 int clientIndexes[MAX_CLIENTS];
 int thisClientIndex = -2;
 
+// Função principal da thread deste cliente que é responsável por filtrar os comandos do terminal
 void* processStdin(void *sockNum) {
     int count = 0;
     unsigned total = 0;
+    // definição do buffer de entrada com o tamanho máximo de uma mensagem somado de um overhead de 15 bytes para
+    // comportar as palavras chave do comando de terminal
     char buffer[BUFSZ + 15];
+    // socket do servidor
     long sock = (long)sockNum;
 
     while(1) {
+        // leitura do comando da entrada padrão
         memset(buffer, 0, BUFSZ + 15);
         pthread_testcancel();
         fgets(buffer, BUFSZ + 15, stdin);
 
+        // A cada iteração do loop de leitura, uma estrutura de dados é alocada para criar e enviar a mensagem de acordo,
+        // caso o comando da entrada padrão segue o padrão esperado dos exemplos.
         command *req = (command *)malloc(sizeof(command));
+
+        // Filtragem do comando "close connection"
         if(strncmp(buffer, "close connection", 16) == 0) {
+            // buffer deve ser exatamente "close connection" ou "close connection\n"
             if(strlen(buffer) > 17) {
                 free(req);
                 continue;
@@ -121,6 +134,8 @@ void* processStdin(void *sockNum) {
                 continue;
             }
 
+            // Montagem e envio do comando REQ_REM(idUser_i, -1, "") para o servidor, solicitando sua remoção e saída
+            // onde idUser_i é o id deste cliente
             req->idMsg = 2;
             req->idSender = thisClientIndex;
             req->idReceiver = -1;
@@ -134,16 +149,20 @@ void* processStdin(void *sockNum) {
             }
         }
 
+        // filtragem do comando "list users"
         if(strncmp(buffer, "list users", 10) == 0) {
             if(strlen(buffer) > 11) {
                 free(req);
                 continue;
             }
+            // buffer deve ser exatamente "list users" ou "list users\n"
             else if(strlen(buffer) == 11 && buffer[strlen(buffer) - 1] != '\n') {
                 free(req);
                 continue;
             }
 
+            // Este cliente realiza uma consulta à sua base local de clientes ativos (clientIndexes) e imprime na tela os IDs
+            // dos clientes ativos, exceto este.
             int foundOne = 0;
             for(int i = 0; i < MAX_CLIENTS; i++) {
                 if(clientIndexes[i] != 0 && i != thisClientIndex) {
@@ -155,30 +174,45 @@ void* processStdin(void *sockNum) {
             if(foundOne) printf("\n");
         }
 
+        // filtragem do comando send to <dest> "<message>"
         if(strncmp(buffer, "send to ", 8) == 0) {
+            // tratamento de exceções caso exista mais espaços em branco que o necessário entre "to" e <dest> e/ou entre <dest> e <message>
             if(strlen(buffer) >= 9 && buffer[8] == ' ') {
                 free(req);
                 continue;
             }
             char *token = strtok(buffer, " "); // send
             token = strtok(NULL, " ");         // to
-            token = strtok(NULL, " ");         // dest
+            token = strtok(NULL, " ");         // <dest>
             if(token == NULL || atoi(token) == 0) {
                 free(req);
                 continue;
             }
 
+            // Como os índices passados via linha de comando começam de 1,
+            // a recuperação dos índices dos clientes, que indexam diretamente o array de clientes ativos
+            // tanto no user.c como no server.c, é feita apenas subtraindo 1 do valor passado via linha de comando. 
             req->idReceiver = atoi(token) - 1;
 
-            token = strtok(NULL, "");
-            if(token == NULL || !(token[strlen(token) - 1] == '\"' || (token[strlen(token) - 2] == '\"' && token[strlen(token) - 1] == '\n'))) {
+            token = strtok(NULL, ""); // "<message>"
+            // filtragem das aspas duplas que delimitam a mensagem na linha de comando
+            if(token == NULL ||
+               token[0] != '\"' ||
+               !(token[strlen(token) - 1] == '\"' || (token[strlen(token) - 2] == '\"' && token[strlen(token) - 1] == '\n'))) {
                 free(req);
                 continue;
             }
+            // Incremento de um do ponteiro de "<message>" para ignorar a primeira aspas dupla
             token += 1;
-            token[strlen(token) - 2] = '\n';
-            token[strlen(token) - 1] = '\0';
+            // insere uma quebra de linha no lugar da segunda aspas dupla e finaliza a string para envio
+            if(token[strlen(token) - 1] == '\"') token[strlen(token) - 1] = '\n';
+            else {
+                token[strlen(token) - 2] = '\n';
+                token[strlen(token) - 1] = '\0';
+            }
 
+            // Montagem e envio do comando MSG(idUser_i, idUser_j, <message>) para o servidor, solicitando o envio da mensagem
+            // de idUser_i para idUser_j, onde idUser_i é o id deste cliente
             req->idMsg = 6;
             req->idSender = thisClientIndex;
             memset(req->message, 0, BUFSZ - 3 * sizeof(int));
@@ -192,7 +226,9 @@ void* processStdin(void *sockNum) {
             }
         }
 
+        // filtragem do comando send all "<message>"
         if(strncmp(buffer, "send all ", 9) == 0) {
+            // filtragem das aspas duplas que delimitam a mensagem na linha de comando
             if(strlen(buffer) >= 10 && buffer[9] != '\"') {
                 free(req);
                 continue;
@@ -202,14 +238,21 @@ void* processStdin(void *sockNum) {
                 free(req);
                 continue;
             }
+            // depois de send all , deve vir "<message>" ou "<message>"\n 
             token = strtok(NULL, "");
             if(token == NULL || !(token[strlen(token) - 1] == '\"' || (token[strlen(token) - 2] == '\"' && token[strlen(token) - 1] == '\n'))) {
                 free(req);
                 continue;
             }
-            token[strlen(token) - 2] = '\n';
-            token[strlen(token) - 1] = '\0';
+            // insere uma quebra de linha no lugar da segunda aspas dupla e finaliza a string para envio
+            if(token[strlen(token) - 1] == '\"') token[strlen(token) - 1] = '\n';
+            else {
+                token[strlen(token) - 2] = '\n';
+                token[strlen(token) - 1] = '\0';
+            }
 
+            // Montagem e envio do comando MSG(idUser_i, -1, <message>) para o servidor, solicitando o envio da mensagem
+            // de idUser_i para todos os clientes ativos, onde idUser_i é o id deste cliente
             req->idMsg = 6;
             req->idSender = thisClientIndex;
             req->idReceiver = -1;
@@ -243,6 +286,7 @@ int main(int argc, char **argv) {
     sock = socket(storage.ss_family, SOCK_STREAM, 0);
     if(sock < 0) msgExit("socket() failed");
 
+    // função connect deste cliente conversa com o accept do servidor para concluir uma conexão TCP
     struct sockaddr *addr = (struct sockaddr *)(&storage);
     if(connect(sock, addr, sizeof(storage)) != 0) msgExit("connect() failed");
 
@@ -250,6 +294,8 @@ int main(int argc, char **argv) {
     addrtostr(addr, addrstr, BUFSZ);
     int count = 0;
 
+    // Logo após o sucesso do connect, este cliente envia um REQ_ADD(-1, -1, "") para o servidor, solicitando
+    // a adição deste novo cliente
     command *reqAdd = (command *)malloc(sizeof(command));
     reqAdd->idMsg = 1;
     reqAdd->idSender = -1;
@@ -260,21 +306,32 @@ int main(int argc, char **argv) {
     if(count != sizeof(command)) msgExit("send() failed, msg size mismatch");
     free(reqAdd);
 
+    // Inicialização do vetor de índices dos clientes ativos, com todos inativos por enquanto
     for(int i = 0; i < MAX_CLIENTS; i++) clientIndexes[i] = 0;
 
+    // lançamento de uma thread para processar os comandos digitados pelo usuário no terminal
     pthread_t t_stdin;
     long sockNum = (long)sock;
     if(pthread_create(&t_stdin, NULL, processStdin, (void *)sockNum) !=0) msgExit("pthread_create() failed");
 
     while(1) {
+        // Assim como o loop principal da thread que processa e filtra a entrada padrão,
+        // este loop principal do cliente recebe e processa mensagens do servidor
+        // por meio da alocação da mesma estrutura command a cada iteração
         command *res = (command*)malloc(sizeof(command)); 
         count = recv(sock, res, sizeof(command), 0);
         if(count != sizeof(command)) msgExit("recv() failed, msg size mismatch");
 
-        if(res->idMsg == 2) {
+        // filtragem da resposta REQ_REM(idUser, -1, "") do servidor, que indica que o cliente idUser
+        // deve ser retirado da lista de clientes ativos, aliado de uma impressão de mensagem na tela
+        // que confirma isso.
+        if(res->idMsg == 2) { 
             clientIndexes[res->idSender] = 0;
             printf("User %02d left the group!\n", res->idSender+1);
         }
+
+        // filtragem da resposta RES_LIST(-1, -1, "i,j,k,...") do servidor, que indica que este cliente
+        // deve atualizar sua lista de clientes ativos
         if(res->idMsg == 4) {
             char *aux = strtok(res->message, ",");
             while(aux != NULL) {
@@ -282,7 +339,12 @@ int main(int argc, char **argv) {
                 aux = strtok(NULL, ",");
             }
         }
+
+        // filtragem da resposta MSG() do servidor
         if(res->idMsg == 6) {
+            // Criação de uma string com o horário atual usada para impressão da mensagem
+            // de acordo com os formatos especificados, ou seja, strings de timestamps não
+            // são trafegadas no socket
             time_t rawtime;
             struct tm *timeinfo;
             time(&rawtime);
@@ -297,7 +359,8 @@ int main(int argc, char **argv) {
                 }
                 printf("%s", res->message); // User {idSender} joined the group!
             }
-            else if(res->idReceiver == -1) { // broadcast de mensagem pública
+            else if(res->idReceiver == -1) { // broadcast de mensagem pública (id de destinatário é -1 (NULL))
+                // caso o broadcast tenha sido feito por este cliente, o formato da mensagem inclui um "-> all"
                 if(res->idSender == thisClientIndex) printf("[%s] -> all: %s", timeStr, res->message);
                 else printf("[%s] %02d: %s", timeStr, res->idSender+1, res->message);
             }
@@ -308,7 +371,10 @@ int main(int argc, char **argv) {
                 printf("P [%s] -> %02d: %s", timeStr, res->idReceiver+1, res->message);
             }
         }
+
+        // filtragem da resposta de ERROR do servidor
         if(res->idMsg == 7) {
+            // filtragem e impressão dos códigos de erro
             if(strcmp(res->message, "01") == 0) {
                 printf("User limit exceeded\n");
                 free(res);
@@ -321,14 +387,20 @@ int main(int argc, char **argv) {
                 printf("Receiver not found\n");
             }
         }
+
+        // filtragem da resposta OK() do servidor (remoção deste cliente da lista de clientes ativos)
+        // e impressão de mensagem na tela que confirma isso
         if(res->idMsg == 8) {
             printf("Removed Successfully\n");
             free(res);
             break;
         }
+
+        // libera a memória alocada para a estrutura command nesta iteração
         free(res);
     }
 
+    // encerramento da thread que processa os comandos digitados pelo usuário no terminal e encerramento do programa
     pthread_cancel(t_stdin);
     pthread_join(t_stdin, NULL);
     close(sock);
