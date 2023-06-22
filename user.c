@@ -369,7 +369,7 @@ int main(int argc, char **argv) {
                 }
                 printf("%s", res->message); // User {idSender} joined the group!
             }
-            else if(res->idReceiver == -1) { // broadcast de mensagem pública (id de destinatário é -1 (NULL))
+            else if(res->idReceiver == -6969) { // broadcast de mensagem pública (id de destinatário é -6969 (NULL))
                 // caso o broadcast tenha sido feito por este cliente, o formato da mensagem inclui um "-> all"
                 if(res->idSender == thisClientIndex) printf("[%s] -> all: %s", timeStr, res->message);
                 else printf("[%s] %02d: %s", timeStr, res->idSender+1, res->message);

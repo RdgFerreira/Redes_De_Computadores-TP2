@@ -380,7 +380,7 @@ int main(int argc, char **argv) {
             }
         }
 
-        // broadcast de uma RES_LIST(-1, -1, "i,j,k,...") para o usuário i, contendo a lista de usuários i,j,k,... ativos da rede
+        // envio de uma RES_LIST(-1, -1, "i,j,k,...") para o usuário i, contendo a lista de usuários i,j,k,... ativos da rede
         msg->idMsg = RES_LIST;
         msg->idSender = -1;
         msg->idReceiver = -1;
