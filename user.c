@@ -96,6 +96,16 @@ typedef struct command{
     char message[BUFSZ - 3 * sizeof(int)]; 
 } command;
 
+// Enumeração que representa os identificadores dos tipos de comandos possíveis:
+enum commandTypes {
+    REQ_ADD = 1,
+    REQ_REM = 2,
+    RES_LIST = 4,
+    MSG = 6,
+    ERROR = 7,
+    OK = 8
+};
+
 // Array de clientes conectados ao servidor registrados neste cliente. 
 // clientIndexes[i] = 0 se o cliente i não está conectado.
 // clientIndexes[i] = 1 se o cliente i está conectado.
@@ -136,7 +146,7 @@ void* processStdin(void *sockNum) {
 
             // Montagem e envio do comando REQ_REM(idUser_i, -1, "") para o servidor, solicitando sua remoção e saída
             // onde idUser_i é o id deste cliente
-            req->idMsg = 2;
+            req->idMsg = REQ_REM;
             req->idSender = thisClientIndex;
             req->idReceiver = -1;
             memset(req->message, 0, BUFSZ - 3 * sizeof(int));
@@ -184,7 +194,7 @@ void* processStdin(void *sockNum) {
             char *token = strtok(buffer, " "); // send
             token = strtok(NULL, " ");         // to
             token = strtok(NULL, " ");         // <dest>
-            if(token == NULL || atoi(token) == 0) {
+            if(token == NULL || (atoi(token) == 0 && strcmp(token, "00") != 0)) {
                 free(req);
                 continue;
             }
@@ -213,7 +223,7 @@ void* processStdin(void *sockNum) {
 
             // Montagem e envio do comando MSG(idUser_i, idUser_j, <message>) para o servidor, solicitando o envio da mensagem
             // de idUser_i para idUser_j, onde idUser_i é o id deste cliente
-            req->idMsg = 6;
+            req->idMsg = MSG;
             req->idSender = thisClientIndex;
             memset(req->message, 0, BUFSZ - 3 * sizeof(int));
             sprintf(req->message, "%s", token);
@@ -251,11 +261,11 @@ void* processStdin(void *sockNum) {
                 token[strlen(token) - 1] = '\0';
             }
 
-            // Montagem e envio do comando MSG(idUser_i, -1, <message>) para o servidor, solicitando o envio da mensagem
+            // Montagem e envio do comando MSG(idUser_i, -6969, <message>) para o servidor, solicitando o envio da mensagem
             // de idUser_i para todos os clientes ativos, onde idUser_i é o id deste cliente
-            req->idMsg = 6;
+            req->idMsg = MSG;
             req->idSender = thisClientIndex;
-            req->idReceiver = -1;
+            req->idReceiver = -6969;
             memset(req->message, 0, BUFSZ - 3 * sizeof(int));
             sprintf(req->message, "%s", token);
 
@@ -297,7 +307,7 @@ int main(int argc, char **argv) {
     // Logo após o sucesso do connect, este cliente envia um REQ_ADD(-1, -1, "") para o servidor, solicitando
     // a adição deste novo cliente
     command *reqAdd = (command *)malloc(sizeof(command));
-    reqAdd->idMsg = 1;
+    reqAdd->idMsg = REQ_ADD;
     reqAdd->idSender = -1;
     reqAdd->idReceiver = -1;
     memset(reqAdd->message, 0, BUFSZ - 3 * sizeof(int));
@@ -325,14 +335,14 @@ int main(int argc, char **argv) {
         // filtragem da resposta REQ_REM(idUser, -1, "") do servidor, que indica que o cliente idUser
         // deve ser retirado da lista de clientes ativos, aliado de uma impressão de mensagem na tela
         // que confirma isso.
-        if(res->idMsg == 2) { 
+        if(res->idMsg == REQ_REM) { 
             clientIndexes[res->idSender] = 0;
             printf("User %02d left the group!\n", res->idSender+1);
         }
 
         // filtragem da resposta RES_LIST(-1, -1, "i,j,k,...") do servidor, que indica que este cliente
         // deve atualizar sua lista de clientes ativos
-        if(res->idMsg == 4) {
+        if(res->idMsg == RES_LIST) {
             char *aux = strtok(res->message, ",");
             while(aux != NULL) {
                 clientIndexes[atoi(aux)] = 1;
@@ -341,7 +351,7 @@ int main(int argc, char **argv) {
         }
 
         // filtragem da resposta MSG() do servidor
-        if(res->idMsg == 6) {
+        if(res->idMsg == MSG) {
             // Criação de uma string com o horário atual usada para impressão da mensagem
             // de acordo com os formatos especificados, ou seja, strings de timestamps não
             // são trafegadas no socket
@@ -373,7 +383,7 @@ int main(int argc, char **argv) {
         }
 
         // filtragem da resposta de ERROR do servidor
-        if(res->idMsg == 7) {
+        if(res->idMsg == ERROR) {
             // filtragem e impressão dos códigos de erro
             if(strcmp(res->message, "01") == 0) {
                 printf("User limit exceeded\n");
@@ -390,7 +400,7 @@ int main(int argc, char **argv) {
 
         // filtragem da resposta OK() do servidor (remoção deste cliente da lista de clientes ativos)
         // e impressão de mensagem na tela que confirma isso
-        if(res->idMsg == 8) {
+        if(res->idMsg == OK) {
             printf("Removed Successfully\n");
             free(res);
             break;

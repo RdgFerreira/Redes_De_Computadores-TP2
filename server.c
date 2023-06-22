@@ -96,6 +96,15 @@ typedef struct command{
     char message[BUFSZ - 3 * sizeof(int)]; 
 } command;
 
+// Enumeração que representa os identificadores dos tipos de comandos possíveis:
+enum commandTypes {
+    REQ_ADD = 1,
+    REQ_REM = 2,
+    RES_LIST = 4,
+    MSG = 6,
+    ERROR = 7,
+    OK = 8
+};
 
 // Estrutura de dados que controla quantos e quais clientes estão conectados:
 // list: lista de inteiros que contêm -2 ou números de sockets de clientes válidos, 
@@ -143,10 +152,10 @@ void* clientThread(void *data) {
             total += count;
         }
 
-        if(req->idMsg == 2) { // Recepção do comando REQ_REM(idUser_i, -1, "");
+        if(req->idMsg == REQ_REM) { // Recepção do comando REQ_REM(idUser_i, -1, "");
             if(clients.list[req->idSender] == -2) { // Usuário solicitante da remoção não está presente na base de clientes do servidor
                 // Montagem do comando de resposta ERROR(-1, idUser_i, "02");
-                req->idMsg = 7;
+                req->idMsg = ERROR;
                 char auxIdSender[3];
                 sprintf(auxIdSender, "%d", req->idSender);
                 req->idReceiver = atoi(auxIdSender);
@@ -164,7 +173,7 @@ void* clientThread(void *data) {
                 clients.list[req->idSender] = -2;
 
                 // Montagem e envio do comando de resposta OK(-1, idUser_i, "01")
-                req->idMsg = 8;
+                req->idMsg = OK;
                 char auxIdSender[3];
                 char auxIdReceiver[3];
                 sprintf(auxIdSender, "%d", req->idSender);
@@ -181,7 +190,7 @@ void* clientThread(void *data) {
                 printf("User %02d removed\n", req->idReceiver+1);
 
                 // Montagem e envio broadcast do comando REQ_REM(id_User_i, -1, "")
-                req->idMsg = 2;
+                req->idMsg = REQ_REM;
                 req->idSender = atoi(auxIdSender);
                 req->idReceiver = -1;
                 memset(req->message, 0, BUFSZ - 3 * sizeof(int));
@@ -200,8 +209,8 @@ void* clientThread(void *data) {
             }
         }
 
-        if(req->idMsg == 6) { // Recepção do comando MSG(idUser_i, idUser_j, "mensagem")
-            if(req->idReceiver == -1) { // Se o campo de remetente for NULL (-1), trata-se de uma mensagem pública
+        if(req->idMsg == MSG) { // Recepção do comando MSG(idUser_i, idUser_j, "mensagem")
+            if(req->idReceiver == -6969) { // Se o campo de remetente for NULL (-6969), trata-se de uma mensagem pública
                 time_t rawtime;
                 struct tm *timeinfo;
                 time(&rawtime);
@@ -226,7 +235,7 @@ void* clientThread(void *data) {
                 printf("User %02d not found\n", req->idReceiver+1);
 
                 // Montagem e resposta para o cliente remetente do comando ERROR(03)
-                req->idMsg = 7;
+                req->idMsg = ERROR;
                 req->idSender = -1;
                 sprintf(req->message, "03");
                 
@@ -307,8 +316,8 @@ int main(int argc, char **argv) {
         command *reqAdd = (command *)malloc(sizeof(command));
         count = recv(clientSocket, reqAdd, sizeof(command), 0);
         if(count != sizeof(command)) msgExit("recv() failed");
-        if(reqAdd->idMsg != 1) {
-            reqAdd->idMsg = 8;
+        if(reqAdd->idMsg != REQ_ADD) {
+            reqAdd->idMsg = OK;
             reqAdd->idSender = -1;
             reqAdd->idReceiver = -1;
             memset(reqAdd->message, 0, BUFSZ - 3 * sizeof(int));
@@ -326,7 +335,7 @@ int main(int argc, char **argv) {
         command *msg = (command *)malloc(sizeof(command));
         // Se a lista de clientes ativos está cheia, o cliente será desconectado e sua execução encerrada, enviando um comando ERROR(-1, -1, "01")
         if(clients.clientCount == MAX_CLIENTS) {
-            msg->idMsg = 7;
+            msg->idMsg = ERROR;
             msg->idSender = -1;
             msg->idReceiver = -1;
             sprintf(msg->message, "01");
@@ -358,7 +367,7 @@ int main(int argc, char **argv) {
         cdata->clientIndex = index;
         printf("User %02d added\n", index+1);
 
-        msg->idMsg = 6;
+        msg->idMsg = MSG;
         msg->idSender = index;
         msg->idReceiver = -1;
         sprintf(msg->message, "User %02d joined the group!\n", index+1);
@@ -372,7 +381,7 @@ int main(int argc, char **argv) {
         }
 
         // broadcast de uma RES_LIST(-1, -1, "i,j,k,...") para o usuário i, contendo a lista de usuários i,j,k,... ativos da rede
-        msg->idMsg = 4;
+        msg->idMsg = RES_LIST;
         msg->idSender = -1;
         msg->idReceiver = -1;
 
