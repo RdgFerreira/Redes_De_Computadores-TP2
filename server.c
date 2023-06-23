@@ -14,6 +14,8 @@
 #define BUFSZ 2048
 // Constante representante do número máximo de clientes simultâneos
 #define MAX_CLIENTS 15
+// Constante representante de um campo inteiro nulo na estrutura command
+#define NULL_INT_FIELD -6969
 
 // Função que imprime na tela exemplos de argumentos corretos para a execução de um servidor
 void usageExit(int argc, char **argv) {
@@ -84,8 +86,8 @@ void addrtostr(const struct sockaddr *addr, char *str, size_t strsize) {
 
 // Estrutura de dados que encapsula os conteúdos essenciais de um comando:
 // idMsg: identificador da mensagem;
-// idSender: identificador do remetente (0 -> 14, ou -1 quando este campo == NULL);
-// idReceiver: identificador do destinatário (0 -> 14, ou -1 quando este campo == NULL),
+// idSender: identificador do remetente (0 -> 14, ou NULL_INT_FIELD quando este campo == NULL);
+// idReceiver: identificador do destinatário (0 -> 14, ou NULL_INT_FIELD quando este campo == NULL),
 // message: O conteúdo textual da mensagem em si.
 // Note que o tamanho máximo do campo mensagem do comando é o tamanho máximo definido acima (2048)
 // descontado de 12 bytes dos 3 inteiros usados para identificar a mensagem, o remetente e o destinatário.
@@ -152,9 +154,9 @@ void* clientThread(void *data) {
             total += count;
         }
 
-        if(req->idMsg == REQ_REM) { // Recepção do comando REQ_REM(idUser_i, -1, "");
+        if(req->idMsg == REQ_REM) { // Recepção do comando REQ_REM(idUser_i, NULL_INT_FIELD, "");
             if(clients.list[req->idSender] == -2) { // Usuário solicitante da remoção não está presente na base de clientes do servidor
-                // Montagem do comando de resposta ERROR(-1, idUser_i, "02");
+                // Montagem do comando de resposta ERROR(NULL_INT_FIELD, idUser_i, "02");
                 req->idMsg = ERROR;
                 char auxIdSender[3];
                 sprintf(auxIdSender, "%d", req->idSender);
@@ -172,7 +174,7 @@ void* clientThread(void *data) {
                 // Marca o socket na lista como vazio na posição indexada pelo identificador do cliente solicitante
                 clients.list[req->idSender] = -2;
 
-                // Montagem e envio do comando de resposta OK(-1, idUser_i, "01")
+                // Montagem e envio do comando de resposta OK(NULL_INT_FIELD, idUser_i, "01")
                 req->idMsg = OK;
                 char auxIdSender[3];
                 char auxIdReceiver[3];
@@ -189,10 +191,10 @@ void* clientThread(void *data) {
                 // Mensagem padrão de remoção de um cliente no terminal do servidor
                 printf("User %02d removed\n", req->idReceiver+1);
 
-                // Montagem e envio broadcast do comando REQ_REM(id_User_i, -1, "")
+                // Montagem e envio broadcast do comando REQ_REM(id_User_i, NULL_INT_FIELD, "")
                 req->idMsg = REQ_REM;
                 req->idSender = atoi(auxIdSender);
-                req->idReceiver = -1;
+                req->idReceiver = NULL_INT_FIELD;
                 memset(req->message, 0, BUFSZ - 3 * sizeof(int));
 
                 // Percorre a estrutura de lista de clientes e envia a mensagem para todos os clientes ativos
@@ -210,7 +212,7 @@ void* clientThread(void *data) {
         }
 
         if(req->idMsg == MSG) { // Recepção do comando MSG(idUser_i, idUser_j, "mensagem")
-            if(req->idReceiver == -6969) { // Se o campo de remetente for NULL (-6969), trata-se de uma mensagem pública
+            if(req->idReceiver == NULL_INT_FIELD) { // Se o campo de remetente for NULL (NULL_INT_FIELD), trata-se de uma mensagem pública
                 time_t rawtime;
                 struct tm *timeinfo;
                 time(&rawtime);
@@ -236,7 +238,8 @@ void* clientThread(void *data) {
 
                 // Montagem e resposta para o cliente remetente do comando ERROR(03)
                 req->idMsg = ERROR;
-                req->idSender = -1;
+                req->idSender = NULL_INT_FIELD;
+                req->idReceiver = NULL_INT_FIELD;
                 sprintf(req->message, "03");
                 
                 bytesSent = send(cdata->clientSocket, req, sizeof(command), 0);
@@ -244,12 +247,7 @@ void* clientThread(void *data) {
                 if(bytesSent == 0) break;
             }
             else {
-                // echo para o cliente remetente
-                bytesSent = send(cdata->clientSocket, req, sizeof(command), 0);
-                if(bytesSent != sizeof(command)) msgExit("send() failed");
-                if(bytesSent == 0) break;
-
-                // então envia de fato a mensagem para o destinatário
+                // Envia a mensagem para o destinatário
                 bytesSent = send(clients.list[req->idReceiver], req, sizeof(command), 0);
                 if(bytesSent != sizeof(command)) msgExit("send() failed");
                 if(bytesSent == 0) break;
@@ -295,6 +293,7 @@ int main(int argc, char **argv) {
     addrtostr(addr, addrstr, BUFSZ);
 
     int count = 0;
+    unsigned total = 0;
     // Inicialização do vetor de clientes ativos, de modo que todos os índices sejam vazios (-2)
     for(int i = 0; i < MAX_CLIENTS; i++) clients.list[i] = -2;
     // contador de clientes inicia em 0
@@ -312,14 +311,18 @@ int main(int argc, char **argv) {
             msgExit("accept() failed");
         }
 
-        // Após a conclusão do bem sucedida do accept, o servidor deve receber um comando REQ_ADD e responder com um OK(-1, -1, "")
+        // Após a conclusão do bem sucedida do accept, o servidor deve receber um comando REQ_ADD e 
+        // responder com um OK(NULL_INT_FIELD, NULL_INT_FIELD, "")
         command *reqAdd = (command *)malloc(sizeof(command));
-        count = recv(clientSocket, reqAdd, sizeof(command), 0);
-        if(count != sizeof(command)) msgExit("recv() failed");
+        while(1) {
+            count = recv(clientSocket, reqAdd + total, sizeof(command) - total, 0);
+            if (count == 0 || count == sizeof(command)) break;
+            total += count;
+        }
         if(reqAdd->idMsg != REQ_ADD) {
             reqAdd->idMsg = OK;
-            reqAdd->idSender = -1;
-            reqAdd->idReceiver = -1;
+            reqAdd->idSender = NULL_INT_FIELD;
+            reqAdd->idReceiver = NULL_INT_FIELD;
             memset(reqAdd->message, 0, BUFSZ - 3 * sizeof(int));
 
             count = send(clientSocket, reqAdd, sizeof(command), 0);
@@ -333,11 +336,12 @@ int main(int argc, char **argv) {
 
         // Alocação dinâmica de memória para o comando de resposta
         command *msg = (command *)malloc(sizeof(command));
-        // Se a lista de clientes ativos está cheia, o cliente será desconectado e sua execução encerrada, enviando um comando ERROR(-1, -1, "01")
+        // Se a lista de clientes ativos está cheia, o cliente será desconectado e sua execução encerrada, 
+        // enviando um comando ERROR(NULL_INT_FIELD, NULL_INT_FIELD, "01")
         if(clients.clientCount == MAX_CLIENTS) {
             msg->idMsg = ERROR;
-            msg->idSender = -1;
-            msg->idReceiver = -1;
+            msg->idSender = NULL_INT_FIELD;
+            msg->idReceiver = NULL_INT_FIELD;
             sprintf(msg->message, "01");
 
             count = send(clientSocket, msg, sizeof(command), 0);
@@ -369,10 +373,10 @@ int main(int argc, char **argv) {
 
         msg->idMsg = MSG;
         msg->idSender = index;
-        msg->idReceiver = -1;
+        msg->idReceiver = NULL_INT_FIELD;
         sprintf(msg->message, "User %02d joined the group!\n", index+1);
 
-        // broadcast de uma MSG(idUser_i, -1, "User i joined the group!") para os usuários ativos da rede
+        // broadcast de uma MSG(idUser_i, NULL_INT_FIELD, "User i joined the group!") para os usuários ativos da rede
         for(int j = 0; j < MAX_CLIENTS; j++) {
             if(clients.list[j] != -2) {
                 count = send(clients.list[j], msg, sizeof(command), 0);
@@ -380,10 +384,10 @@ int main(int argc, char **argv) {
             }
         }
 
-        // envio de uma RES_LIST(-1, -1, "i,j,k,...") para o usuário i, contendo a lista de usuários i,j,k,... ativos da rede
+        // envio de uma RES_LIST(NULL_INT_FIELD, NULL_INT_FIELD, "i,j,k,...") para o usuário i, contendo a lista de usuários i,j,k,... ativos da rede
         msg->idMsg = RES_LIST;
-        msg->idSender = -1;
-        msg->idReceiver = -1;
+        msg->idSender = NULL_INT_FIELD;
+        msg->idReceiver = NULL_INT_FIELD;
 
         int first = 1;
         for(int j = 0; j < MAX_CLIENTS; j++) {

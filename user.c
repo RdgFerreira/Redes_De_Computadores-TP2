@@ -11,8 +11,12 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 
+// Constante representante do tamanho máximo de uma mensagem
 #define BUFSZ 2048
+// Constante representante do número máximo de clientes simultâneos
 #define MAX_CLIENTS 15
+// Constante representante de um campo inteiro nulo na estrutura command
+#define NULL_INT_FIELD -6969
 
 void usageExit(int argc, char **argv) {
     printf("Client usage: %s <server IP> <server port>\n", argv[0]);
@@ -115,18 +119,31 @@ int thisClientIndex = -2;
 // Função principal da thread deste cliente que é responsável por filtrar os comandos do terminal
 void* processStdin(void *sockNum) {
     int count = 0;
-    unsigned total = 0;
     // definição do buffer de entrada com o tamanho máximo de uma mensagem somado de um overhead de 15 bytes para
     // comportar as palavras chave do comando de terminal
     char buffer[BUFSZ + 15];
     // socket do servidor
     long sock = (long)sockNum;
 
+    // int len = 0;
+    // char c;
+
     while(1) {
         // leitura do comando da entrada padrão
         memset(buffer, 0, BUFSZ + 15);
         pthread_testcancel();
         fgets(buffer, BUFSZ + 15, stdin);
+        // Outra abordagem de leitura da entrada
+        // len = 0;
+        // while(scanf("%c", &c) == 1) {
+        //     if(c == '\n') {
+        //         buffer[len] = '\0';
+        //         break;
+        //     }
+        //     buffer[len] = c;
+        //     len +=1;
+        // }
+        if(strlen(buffer) == 0) sprintf(buffer, "close connection");
 
         // A cada iteração do loop de leitura, uma estrutura de dados é alocada para criar e enviar a mensagem de acordo,
         // caso o comando da entrada padrão segue o padrão esperado dos exemplos.
@@ -144,19 +161,18 @@ void* processStdin(void *sockNum) {
                 continue;
             }
 
-            // Montagem e envio do comando REQ_REM(idUser_i, -1, "") para o servidor, solicitando sua remoção e saída
+            // Montagem e envio do comando REQ_REM(idUser_i, NULL_INT_FIELD, "") para o servidor, solicitando sua remoção e saída
             // onde idUser_i é o id deste cliente
             req->idMsg = REQ_REM;
             req->idSender = thisClientIndex;
-            req->idReceiver = -1;
+            req->idReceiver = NULL_INT_FIELD;
             memset(req->message, 0, BUFSZ - 3 * sizeof(int));
 
-            total = 0;
-            while(1) {
-                count = send(sock, req + total, sizeof(command) - total, 0);
-                if (count == 0 || count == sizeof(command)) break;
-                total += count;
-            }
+            count = send(sock, req, sizeof(command), 0);
+            if(count != sizeof(command)) msgExit("send() failed, msg size mismatch");
+
+            free(req);
+            break;
         }
 
         // filtragem do comando "list users"
@@ -228,12 +244,30 @@ void* processStdin(void *sockNum) {
             memset(req->message, 0, BUFSZ - 3 * sizeof(int));
             sprintf(req->message, "%s", token);
 
-            total = 0;
-            while(1) {
-                count = send(sock, req + total, sizeof(command) - total, 0);
-                if (count == 0 || count == sizeof(command)) break;
-                total += count;
+            // Criação de uma string com o horário atual usada para impressão da mensagem
+            // de acordo com os formatos especificados, ou seja, strings de timestamps não
+            // são trafegadas no socket
+            time_t rawtime;
+            struct tm *timeinfo;
+            time(&rawtime);
+            timeinfo = localtime(&rawtime);
+            char timeStr[6];
+            strftime(timeStr, 6, "%H:%M", timeinfo);
+
+            // Se o idReceiver é válido, então printa a cópia da mensagem no terminal como timestamp de processamento 
+            if(!((req->idReceiver < 0 || req->idReceiver >= MAX_CLIENTS) || clientIndexes[req->idReceiver] == 0)) {
+                printf("P [%s] -> %02d: %s", timeStr, req->idReceiver+1, req->message);
             }
+            // Caso contrário, ou seja, ou seja, menor que NULL_INT_FIELD, maior que o 
+            // maior identificador possível (14) ou o valor indexado por ele na lista de
+            // clientes contém um socket vazio, então idReceiver é inválido.
+            // Essa mesma checagem será feita no servidor
+            else {
+                memset(req->message, 0, BUFSZ - 3 * sizeof(int));
+            }
+
+            count = send(sock, req, sizeof(command), 0);
+            if(count != sizeof(command)) msgExit("send() failed, msg size mismatch");
         }
 
         // filtragem do comando send all "<message>"
@@ -261,20 +295,16 @@ void* processStdin(void *sockNum) {
                 token[strlen(token) - 1] = '\0';
             }
 
-            // Montagem e envio do comando MSG(idUser_i, -6969, <message>) para o servidor, solicitando o envio da mensagem
+            // Montagem e envio do comando MSG(idUser_i, NULL_INT_FIELD, <message>) para o servidor, solicitando o envio da mensagem
             // de idUser_i para todos os clientes ativos, onde idUser_i é o id deste cliente
             req->idMsg = MSG;
             req->idSender = thisClientIndex;
-            req->idReceiver = -6969;
+            req->idReceiver = NULL_INT_FIELD;
             memset(req->message, 0, BUFSZ - 3 * sizeof(int));
             sprintf(req->message, "%s", token);
 
-            total = 0;
-            while(1) {
-                count = send(sock, req + total, sizeof(command) - total, 0);
-                if (count == 0 || count == sizeof(command)) break;
-                total += count;
-            }
+            count = send(sock, req, sizeof(command), 0);
+            if(count != sizeof(command)) msgExit("send() failed, msg size mismatch");
         }
 
         free(req);
@@ -304,12 +334,12 @@ int main(int argc, char **argv) {
     addrtostr(addr, addrstr, BUFSZ);
     int count = 0;
 
-    // Logo após o sucesso do connect, este cliente envia um REQ_ADD(-1, -1, "") para o servidor, solicitando
+    // Logo após o sucesso do connect, este cliente envia um REQ_ADD(NULL_INT_FIELD, NULL_INT_FIELD, "") para o servidor, solicitando
     // a adição deste novo cliente
     command *reqAdd = (command *)malloc(sizeof(command));
     reqAdd->idMsg = REQ_ADD;
-    reqAdd->idSender = -1;
-    reqAdd->idReceiver = -1;
+    reqAdd->idSender = NULL_INT_FIELD;
+    reqAdd->idReceiver = NULL_INT_FIELD;
     memset(reqAdd->message, 0, BUFSZ - 3 * sizeof(int));
 
     count = send(sock, reqAdd, sizeof(command), 0);
@@ -332,7 +362,7 @@ int main(int argc, char **argv) {
         count = recv(sock, res, sizeof(command), 0);
         if(count != sizeof(command)) msgExit("recv() failed, msg size mismatch");
 
-        // filtragem da resposta REQ_REM(idUser, -1, "") do servidor, que indica que o cliente idUser
+        // filtragem da resposta REQ_REM(idUser, NULL_INT_FIELD, "") do servidor, que indica que o cliente idUser
         // deve ser retirado da lista de clientes ativos, aliado de uma impressão de mensagem na tela
         // que confirma isso.
         if(res->idMsg == REQ_REM) { 
@@ -340,7 +370,7 @@ int main(int argc, char **argv) {
             printf("User %02d left the group!\n", res->idSender+1);
         }
 
-        // filtragem da resposta RES_LIST(-1, -1, "i,j,k,...") do servidor, que indica que este cliente
+        // filtragem da resposta RES_LIST(NULL_INT_FIELD, NULL_INT_FIELD, "i,j,k,...") do servidor, que indica que este cliente
         // deve atualizar sua lista de clientes ativos
         if(res->idMsg == RES_LIST) {
             char *aux = strtok(res->message, ",");
@@ -369,16 +399,13 @@ int main(int argc, char **argv) {
                 }
                 printf("%s", res->message); // User {idSender} joined the group!
             }
-            else if(res->idReceiver == -6969) { // broadcast de mensagem pública (id de destinatário é -6969 (NULL))
+            else if(res->idReceiver == NULL_INT_FIELD) { // broadcast de mensagem pública (id de destinatário é NULL_INT_FIELD (NULL))
                 // caso o broadcast tenha sido feito por este cliente, o formato da mensagem inclui um "-> all"
                 if(res->idSender == thisClientIndex) printf("[%s] -> all: %s", timeStr, res->message);
                 else printf("[%s] %02d: %s", timeStr, res->idSender+1, res->message);
             }
-            else if(res->idSender != thisClientIndex) { // Mensagem Privada chegou de outro cliente
+            else { // Mensagem Privada chegou
                 printf("P [%s] %02d: %s", timeStr, res->idSender+1, res->message);
-            }
-            else { // echo de mensagem privada para este cliente
-                printf("P [%s] -> %02d: %s", timeStr, res->idReceiver+1, res->message);
             }
         }
 
